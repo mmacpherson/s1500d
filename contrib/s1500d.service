@@ -1,0 +1,26 @@
+[Unit]
+Description=ScanSnap S1500 event daemon
+Documentation=https://github.com/mmacpherson/s1500d
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/s1500d -c /etc/s1500d/config.toml
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Hardening — drop everything except USB access
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Needs USB access. Either run as root or set up the udev rule
+# (contrib/99-scansnap.rules) and uncomment these:
+# User=scanner
+# Group=scanner
+# SupplementaryGroups=plugdev
+
+[Install]
+WantedBy=multi-user.target

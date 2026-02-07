@@ -1,0 +1,4 @@
+# Allow non-root access to the Fujitsu ScanSnap S1500.
+# Install: sudo cp 99-scansnap.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload-rules
+SUBSYSTEM=="usb", ATTR{idVendor}=="04c5", ATTR{idProduct}=="11a2", MODE="0666", TAG+="uaccess"

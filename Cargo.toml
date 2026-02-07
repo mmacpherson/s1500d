@@ -1,0 +1,18 @@
+[package]
+name = "s1500d"
+version = "0.2.0"
+edition = "2021"
+description = "Bespoke event daemon for the Fujitsu ScanSnap S1500"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mmacpherson/s1500d"
+
+[dependencies]
+rusb = "0.9"
+log = "0.4"
+env_logger = "0.11"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+strip = true
+lto = true
