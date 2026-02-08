@@ -4,60 +4,30 @@ A minimal Rust daemon that monitors the Fujitsu ScanSnap S1500 scanner via direc
 
 ## Features
 
-- **Three operating modes:**
-  - **Log-only** — monitor and log scanner events (button, paper, lid) with no handler
-  - **Legacy** — run a handler script on each raw event (like scanbd)
-  - **Config** — gesture detection with press-count profiles dispatched via TOML config
-- **`--doctor` mode** — interactive hardware verification that walks through each sensor
+- **Runs a handler script** on scanner events (button press, paper inserted/removed, lid open/close)
+- **Gesture detection** — optional TOML config maps multi-press patterns to named profiles (single press = standard scan, double press = legal size, etc.)
 - **USB release during handler execution** — the daemon releases the USB device before calling your handler, so `scanimage` and other SANE tools can claim the scanner
+- **`--doctor` mode** — interactive hardware verification that walks through each sensor
 - **Lid detection via USB presence** — opening the ADF lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect), so no polling is needed for door state
 
-## Requirements
-
-- **libusb**
-  - Arch/CachyOS: `pacman -S libusb`
-  - Debian/Ubuntu: `apt install libusb-1.0-0-dev`
-  - Fedora: `dnf install libusb1-devel`
-- **Rust toolchain** (for building from source) — install via [rustup](https://rustup.rs/)
-
 ## Installation
-
-### From source
-
-```sh
-cargo install --path .
-```
 
 ### Arch Linux (AUR)
 
 ```sh
-# With an AUR helper:
 paru -S s1500d
-
-# Or manually:
-git clone https://aur.archlinux.org/s1500d.git
-cd s1500d && makepkg -si
 ```
 
-### make install
-
-```sh
-make release
-sudo make install
-```
-
-See the [Makefile](Makefile) for configurable `PREFIX`, `DESTDIR`, `SYSCONFDIR`, and other variables.
+For other distributions and manual installation, see [INSTALL.md](INSTALL.md).
 
 ## Usage
 
 ```
 s1500d                        Monitor and log events (no handler)
-s1500d HANDLER                Legacy: run HANDLER on each raw event
-s1500d -c CONFIG.toml         Config: gesture detection + profiles
+s1500d HANDLER                Run HANDLER on each event
+s1500d -c CONFIG.toml         Gesture detection + profile dispatch
 s1500d --doctor               Interactive hardware verification
 ```
-
-### Legacy mode
 
 The handler script receives the event name as `$1`:
 
@@ -70,23 +40,13 @@ The handler script receives the event name as `$1`:
 | `button-down` | Scan button pressed |
 | `button-up` | Scan button released |
 
-### Config mode
-
-The handler receives structured arguments:
-
-| Arguments | Meaning |
-|-----------|---------|
-| `scan <profile>` | Gesture completed — press count mapped to a profile name |
-| `paper-in` | Paper inserted |
-| `paper-out` | Paper removed |
-| `device-arrived` | Scanner appeared |
-| `device-left` | Scanner removed |
+With `-c`, button events are replaced by gesture dispatch — the handler receives `scan <profile>` instead of raw `button-down`/`button-up` events. See [Configuration](#configuration) below.
 
 Set `RUST_LOG=debug` for verbose output.
 
 ## Configuration
 
-Config mode uses a TOML file to map button press counts to named profiles:
+With `-c`, s1500d uses a TOML file to map button press counts to named profiles:
 
 ```toml
 handler = "/path/to/your/handler.sh"

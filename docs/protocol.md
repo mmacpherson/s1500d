@@ -110,8 +110,6 @@ If a scanner daemon only checks bit 0 (as the SANE header suggests), it will det
 
 This discrepancy was verified using `explore.py --discover`, which guides a human through pressing the button in different ways while recording raw hex responses. The SANE header may be correct for other Fujitsu models — the bit mapping could vary by device.
 
-A draft bug report for the SANE project is included at [`docs/sane-bug-draft.md`](sane-bug-draft.md).
-
 ## Reproducing this on other models
 
 If you have a different ScanSnap model, you can map its hardware status bits using the included Python diagnostic tool:
