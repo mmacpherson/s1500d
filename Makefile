@@ -7,7 +7,7 @@ UDEV_DIR  ?= $(PREFIX)/lib/udev/rules.d
 SHAREDIR  ?= $(PREFIX)/share
 LICENSEDIR ?= $(SHAREDIR)/licenses/s1500d
 
-.PHONY: build release install uninstall clean fmt clippy check
+.PHONY: build release install uninstall clean fmt clippy check update-deps
 
 build:
 	cargo build
@@ -44,3 +44,8 @@ clippy:
 
 check: fmt clippy
 	cargo build
+
+update-deps:
+	cargo update
+	cargo clippy --all-targets -- -D warnings
+	cargo test
