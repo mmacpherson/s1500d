@@ -21,6 +21,7 @@ install:
 	install -Dm0644 contrib/99-scansnap.rules $(DESTDIR)$(UDEV_DIR)/99-scansnap.rules
 	install -Dm0644 contrib/config.toml $(DESTDIR)$(SYSCONFDIR)/s1500d/config.toml
 	install -Dm0755 contrib/handler-example.sh $(DESTDIR)$(SHAREDIR)/s1500d/handler-example.sh
+	install -Dm0755 contrib/handler-scan-to-pdf.sh $(DESTDIR)$(SHAREDIR)/s1500d/handler-scan-to-pdf.sh
 	install -Dm0644 LICENSE-MIT $(DESTDIR)$(LICENSEDIR)/LICENSE-MIT
 	install -Dm0644 LICENSE-APACHE $(DESTDIR)$(LICENSEDIR)/LICENSE-APACHE
 

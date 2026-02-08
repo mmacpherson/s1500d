@@ -2,10 +2,12 @@
 #
 # handler: path to script called on events
 # gesture_timeout_ms: how long to wait for additional presses (default 400)
+# log_level: error, warn, info, debug, trace (default "info"; RUST_LOG overrides)
 # profiles: map press count → profile name passed to handler as "scan <profile>"
 
 handler = "/usr/share/s1500d/handler-example.sh"
 gesture_timeout_ms = 400
+log_level = "info"
 
 [profiles]
 1 = "standard"

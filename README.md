@@ -47,7 +47,7 @@ The handler script receives the event name as `$1`:
 
 With `-c`, button events are replaced by gesture dispatch — the handler receives `scan <profile>` instead of raw `button-down`/`button-up` events. See [Configuration](#configuration) below.
 
-Set `RUST_LOG=debug` for verbose output.
+Set `log_level = "debug"` in your config file for verbose output. The `RUST_LOG` environment variable overrides config if set.
 
 ## Configuration
 
@@ -56,6 +56,7 @@ With `-c`, s1500d uses a TOML file to map button press counts to named profiles:
 ```toml
 handler = "/path/to/your/handler.sh"
 gesture_timeout_ms = 400
+log_level = "info"
 
 [profiles]
 1 = "standard"
@@ -64,7 +65,9 @@ gesture_timeout_ms = 400
 
 When you press the scan button once, the daemon waits `gesture_timeout_ms` for additional presses. If none come, it calls `handler.sh scan standard`. Two presses within the window calls `handler.sh scan legal`. Unmapped press counts are logged and ignored.
 
-See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contrib/handler-example.sh`](contrib/handler-example.sh) for a handler template.
+`log_level` accepts standard values: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this setting if set.
+
+See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contrib/handler-example.sh`](contrib/handler-example.sh) for a handler template. For a practical scan-to-PDF workflow, see [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh).
 
 ## How it works
 
@@ -98,6 +101,7 @@ The repo includes systemd and udev files in [`contrib/`](contrib/):
 - **`99-scansnap.rules`** — udev rule for non-root USB access
 - **`config.toml`** — example configuration
 - **`handler-example.sh`** — example handler script
+- **`handler-scan-to-pdf.sh`** — scan-to-PDF handler using `scanimage` + `img2pdf`
 
 ## License
 

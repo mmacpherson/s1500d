@@ -8,16 +8,13 @@ Type=simple
 ExecStart=/usr/bin/s1500d -c /etc/s1500d/config.toml
 Restart=always
 RestartSec=5
-Environment=RUST_LOG=info
 
-# Hardening — drop everything except USB access
-ProtectSystem=strict
-ProtectHome=true
+# Hardening — safe defaults that don't interfere with USB access
 NoNewPrivileges=true
-PrivateTmp=true
+ProtectHome=true
 
-# Needs USB access. Either run as root or set up the udev rule
-# (contrib/99-scansnap.rules) and uncomment these:
+# To run as a dedicated user instead of root, set up the udev rule
+# (contrib/99-scansnap.rules) and uncomment:
 # User=scanner
 # Group=scanner
 # SupplementaryGroups=plugdev
