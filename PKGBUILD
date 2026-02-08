@@ -11,7 +11,7 @@ depends=('libusb')
 install=s1500d.install
 backup=('etc/s1500d/config.toml')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('af6cd27693f360ee3998f9b1b1c9862914c370cb4ec084f3ad7da955349f44a8')
 
 prepare() {
     cd "$pkgname-$pkgver"
