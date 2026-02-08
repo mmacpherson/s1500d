@@ -1,34 +1,55 @@
-# Pre-commit hooks for s1500d
-# Install: pre-commit install
-# Run manually: pre-commit run --all-files
-
-repos:
-  # General file hygiene
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      - id: trailing-whitespace
-        args: [--markdown-linebreak-ext=md]
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-toml
-      - id: check-merge-conflict
-      - id: check-added-large-files
-        args: ['--maxkb=500']
-      - id: detect-private-key
-      - id: mixed-line-ending
-        args: ['--fix=lf']
-
-  # Rust formatting (clippy is too slow for pre-commit, use CI instead)
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
-    hooks:
-      - id: fmt
-        name: cargo fmt
-        args: ['--all', '--']
-
-# CI configuration
 ci:
-  # Skip hooks that require cargo (CI runs these separately)
-  skip: [fmt]
-  autoupdate_schedule: monthly
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: [cargo-fmt, cargo-clippy]
+  submodules: false
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: check-added-large-files
+    args: [--maxkb=500]
+  - id: check-case-conflict
+  - id: check-merge-conflict
+  - id: check-toml
+  - id: check-yaml
+  - id: detect-private-key
+  - id: end-of-file-fixer
+  - id: mixed-line-ending
+    args: [--fix=lf]
+  - id: trailing-whitespace
+- repo: https://github.com/crate-ci/typos
+  rev: v1.43.1
+  hooks:
+  - id: typos
+    args: [--force-exclude]
+    files: \.(md|txt)$
+- repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+  rev: v2.16.0
+  hooks:
+  - id: pretty-format-toml
+    args: [--autofix, --indent, '2']
+    exclude: ^Cargo\.lock$
+  - id: pretty-format-yaml
+    args: [--autofix, --indent, '2']
+- repo: local
+  hooks:
+  - id: cargo-fmt
+    name: cargo fmt
+    language: system
+    entry: cargo fmt --all
+    pass_filenames: false
+    files: \.rs$
+  - id: cargo-clippy
+    name: cargo clippy
+    language: system
+    entry: cargo clippy --workspace --all-targets -- -D warnings
+    pass_filenames: false
+    stages: [manual]
+    files: \.rs$
