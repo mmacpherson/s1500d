@@ -1,6 +1,6 @@
 # Maintainer: Mike Macpherson <mmacpherson@users.noreply.github.com>
 pkgname=s1500d
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Bespoke event daemon for the Fujitsu ScanSnap S1500'
 url='https://github.com/mmacpherson/s1500d'

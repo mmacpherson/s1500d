@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 name = "s1500d"
 repository = "https://github.com/mmacpherson/s1500d"
 rust-version = "1.71"
-version = "0.2.0"
+version = "0.3.0"
 
 [profile.release]
 lto = true
