@@ -1,5 +1,10 @@
 # s1500d
 
+[![CI](https://github.com/mmacpherson/s1500d/actions/workflows/ci.yml/badge.svg)](https://github.com/mmacpherson/s1500d/actions/workflows/ci.yml)
+[![AUR](https://img.shields.io/aur/version/s1500d)](https://aur.archlinux.org/packages/s1500d)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
+[![MSRV](https://img.shields.io/badge/MSRV-1.71-orange)](https://www.rust-lang.org)
+
 A minimal Rust daemon that monitors the Fujitsu ScanSnap S1500 scanner via direct USB, replacing [scanbd](https://github.com/wilhelmbot/scanbd) for button/paper detection. Where scanbd opens the full SANE stack and sends 25 SCSI commands per poll cycle, s1500d sends a single 31-byte USB command and reads 12 bytes — using a protocol reverse-engineered from USB captures and SANE source analysis.
 
 ## Features
