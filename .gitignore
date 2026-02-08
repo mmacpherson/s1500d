@@ -19,3 +19,7 @@ Thumbs.db
 *.rpm
 *.tar.gz
 *.pkg.tar.zst
+
+# makepkg
+/pkg/
+/src/s1500d-*/
