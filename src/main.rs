@@ -65,6 +65,7 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 const USB_TIMEOUT: Duration = Duration::from_millis(1000);
 const STATUS_TIMEOUT: Duration = Duration::from_millis(200);
+const MAX_POLL_FAILURES: u32 = 3;
 
 // ── Fujitsu USB protocol ─────────────────────────────────────────────
 
@@ -164,6 +165,48 @@ pub(crate) fn try_open(ctx: &rusb::Context) -> Option<rusb::DeviceHandle<rusb::C
     let _ = handle.set_auto_detach_kernel_driver(true);
     handle.claim_interface(IFACE).ok()?;
     Some(handle)
+}
+
+/// Open the scanner with a USB reset to clear stale protocol state.
+///
+/// Used in the outer reconnect loop to ensure a clean connection after a
+/// previous s1500d process may have left the device in a bad state (e.g.,
+/// after `systemctl restart`).
+fn try_open_with_reset(ctx: &rusb::Context) -> Option<rusb::DeviceHandle<rusb::Context>> {
+    let handle = try_open(ctx)?;
+    info!("usb: resetting device for clean state");
+    if handle.reset().is_err() {
+        warn!("usb: reset failed, proceeding with existing handle");
+        return Some(handle);
+    }
+    // Drop stale handle, wait for device to re-enumerate, then re-open fresh.
+    drop(handle);
+    thread::sleep(Duration::from_millis(200));
+    try_open(ctx)
+}
+
+/// Attempt to recover from consecutive poll failures by resetting the device.
+///
+/// Takes ownership of the stale handle (preventing accidental reuse), resets,
+/// drops, re-opens, and verifies responsiveness with a test poll.
+fn try_reset_device(
+    handle: rusb::DeviceHandle<rusb::Context>,
+    ctx: &rusb::Context,
+) -> Option<rusb::DeviceHandle<rusb::Context>> {
+    info!("usb: poll failures hit threshold, attempting device reset");
+    let _ = handle.reset();
+    drop(handle);
+    thread::sleep(Duration::from_millis(200));
+
+    let new_handle = try_open(ctx)?;
+    // Verify the device is actually responsive.
+    if poll_status(&new_handle).is_some() {
+        info!("usb: device reset successful, resuming");
+        Some(new_handle)
+    } else {
+        warn!("usb: device unresponsive after reset");
+        None
+    }
 }
 
 /// Send GET_HW_STATUS and decode the response.
@@ -276,7 +319,7 @@ fn run(mode: Mode) -> ! {
     loop {
         // ── Phase 1: wait for device ─────────────────────────────
         let mut handle = loop {
-            match try_open(&ctx) {
+            match try_open_with_reset(&ctx) {
                 Some(h) => break h,
                 None => {
                     if was_present {
@@ -298,6 +341,8 @@ fn run(mode: Mode) -> ! {
         }
 
         // ── Phase 2: poll status while device is alive ───────────
+        let mut poll_failures: u32 = 0;
+        let mut has_reset = false;
         'poll: loop {
             // Check gesture timeout before polling
             let gesture_action = check_gesture_timeout(&gesture, &mode);
@@ -328,10 +373,24 @@ fn run(mode: Mode) -> ! {
             }
 
             let Some(state) = poll_status(&handle) else {
-                // USB error — device likely disconnected.
+                poll_failures += 1;
+                if poll_failures < MAX_POLL_FAILURES {
+                    debug!("poll failed ({poll_failures}/{MAX_POLL_FAILURES}), retrying");
+                    thread::sleep(POLL_INTERVAL);
+                    continue 'poll;
+                }
+                if !has_reset {
+                    has_reset = true;
+                    if let Some(new_handle) = try_reset_device(handle, &ctx) {
+                        handle = new_handle;
+                        poll_failures = 0;
+                        continue 'poll;
+                    }
+                }
                 debug!("poll failed, assuming device left");
                 break;
             };
+            poll_failures = 0;
 
             match prev {
                 None => {
@@ -485,6 +544,10 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("--help" | "-h") => {
             print_usage();
+            std::process::exit(0);
+        }
+        Some("--version" | "-V") => {
+            println!("s1500d {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
         Some("--doctor") => {
