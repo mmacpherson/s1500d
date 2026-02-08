@@ -20,9 +20,17 @@ cargo build --release  # release build (stripped, LTO)
 
 ## Testing
 
-There are no automated tests yet — the daemon requires physical USB hardware.
+Run the unit test suite with:
 
-The best way to verify changes is `--doctor` mode, which walks through each sensor interactively:
+```sh
+cargo test
+```
+
+Tests cover configuration parsing, gesture state-machine logic, and event
+dispatch — no hardware required.
+
+For **physical hardware** verification, use `--doctor` mode, which walks through
+each sensor interactively:
 
 ```sh
 cargo run -- --doctor
@@ -33,6 +41,14 @@ You can also run in log-only mode to watch events in real time:
 ```sh
 RUST_LOG=debug cargo run
 ```
+
+## Module layout
+
+| File | Responsibility |
+|------|---------------|
+| `src/main.rs` | USB protocol, state machine, event loop, handler dispatch |
+| `src/config.rs` | TOML config parsing and validation |
+| `src/doctor.rs` | Interactive `--doctor` hardware check |
 
 ## Code style
 

@@ -233,12 +233,12 @@ fn print_usage() {
          \n\
          Usage:\n\
          \x20 s1500d                   Monitor and log events\n\
-         \x20 s1500d HANDLER           Legacy: run HANDLER on each raw event\n\
-         \x20 s1500d -c CONFIG.toml    Config: gesture detection + profiles\n\
+         \x20 s1500d HANDLER           Run HANDLER on each raw event\n\
+         \x20 s1500d -c CONFIG.toml    Gesture detection + profile dispatch\n\
          \x20 s1500d --doctor          Interactive hardware verification\n\
          \x20 s1500d --help            Show this message\n\
          \n\
-         Legacy mode — handler receives the event name as $1:\n\
+         Handler mode (s1500d HANDLER) — handler receives the event name as $1:\n\
          \x20 device-arrived   Scanner lid opened (USB device appeared)\n\
          \x20 device-left      Scanner lid closed (USB device removed)\n\
          \x20 paper-in         Paper inserted into feeder\n\
@@ -246,7 +246,7 @@ fn print_usage() {
          \x20 button-down      Scan button pressed\n\
          \x20 button-up        Scan button released\n\
          \n\
-         Config mode — handler receives:\n\
+         Config mode (s1500d -c CONFIG.toml) — handler receives:\n\
          \x20 scan <profile>   Gesture completed (press count mapped to profile)\n\
          \x20 paper-in         Paper inserted (no second arg)\n\
          \x20 paper-out        Paper removed (no second arg)\n\
@@ -508,13 +508,14 @@ fn main() {
         None
     };
 
-    // Set RUST_LOG from config if not already set by the environment.
-    if std::env::var("RUST_LOG").is_err() {
-        let level = config.as_ref().map_or("info", |c| &c.log_level);
-        std::env::set_var("RUST_LOG", level);
-    }
+    // Use config log_level as default filter if RUST_LOG is not set.
+    let default_filter = if std::env::var("RUST_LOG").is_ok() {
+        "info" // env var takes priority; from_env will use it regardless of this fallback
+    } else {
+        config.as_ref().map_or("info", |c| c.log_level.as_str())
+    };
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
         .format_timestamp_secs()
         .init();
 
