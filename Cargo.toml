@@ -2,6 +2,7 @@
 name = "s1500d"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.71"
 description = "Bespoke event daemon for the Fujitsu ScanSnap S1500"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mmacpherson/s1500d"

@@ -267,6 +267,7 @@ fn run_handler(script: &str, args: &[&str]) {
 // ── Operating modes ──────────────────────────────────────────────────
 
 /// What mode the daemon is running in.
+#[allow(clippy::enum_variant_names)]
 enum Mode {
     /// Log events only, no handler.
     LogOnly,
@@ -427,9 +428,7 @@ fn run(mode: Mode) -> ! {
 
             // In config mode with a pending gesture, poll faster to hit timeout promptly
             let sleep = match (&mode, &gesture) {
-                (Mode::ConfigMode(_), GestureState::Released(_, _)) => {
-                    Duration::from_millis(20)
-                }
+                (Mode::ConfigMode(_), GestureState::Released(_, _)) => Duration::from_millis(20),
                 _ => POLL_INTERVAL,
             };
             thread::sleep(sleep);
@@ -504,19 +503,13 @@ fn process_transitions(
                     // Non-button events: fire handler immediately
                     _ => {
                         info!("{}", ev.tag());
-                        return Action::RunHandler(
-                            config.handler.clone(),
-                            vec![ev.tag().into()],
-                        );
+                        return Action::RunHandler(config.handler.clone(), vec![ev.tag().into()]);
                     }
                 }
             }
             Mode::Legacy(ref script) => {
                 info!("{}", ev.tag());
-                return Action::RunHandler(
-                    script.clone(),
-                    vec![ev.tag().into()],
-                );
+                return Action::RunHandler(script.clone(), vec![ev.tag().into()]);
             }
             Mode::LogOnly => {
                 info!("{}", ev.tag());
@@ -638,8 +631,14 @@ fn doctor() {
     print!("      Press Enter, then insert a sheet of paper: ");
     wait_enter();
     match wait_for_state(&handle, |s| s.paper, DOCTOR_TIMEOUT) {
-        Some(_) => { println!(" detected!       PASS"); passed += 1; }
-        None =>    { println!(" timed out       FAIL"); failed += 1; }
+        Some(_) => {
+            println!(" detected!       PASS");
+            passed += 1;
+        }
+        None => {
+            println!(" timed out       FAIL");
+            failed += 1;
+        }
     }
 
     // ── 4. Paper remove ──────────────────────────────────────────
@@ -647,8 +646,14 @@ fn doctor() {
     print!("      Press Enter, then remove the paper: ");
     wait_enter();
     match wait_for_state(&handle, |s| !s.paper, DOCTOR_TIMEOUT) {
-        Some(_) => { println!(" detected!       PASS"); passed += 1; }
-        None =>    { println!(" timed out       FAIL"); failed += 1; }
+        Some(_) => {
+            println!(" detected!       PASS");
+            passed += 1;
+        }
+        None => {
+            println!(" timed out       FAIL");
+            failed += 1;
+        }
     }
 
     // ── 5. Button press ──────────────────────────────────────────
@@ -662,16 +667,28 @@ fn doctor() {
     print!("      Press Enter, then press and HOLD the scan button: ");
     wait_enter();
     match wait_for_state(&handle, |s| s.button, DOCTOR_TIMEOUT) {
-        Some(_) => { println!(" detected!       PASS"); passed += 1; }
-        None =>    { println!(" timed out       FAIL"); failed += 1; }
+        Some(_) => {
+            println!(" detected!       PASS");
+            passed += 1;
+        }
+        None => {
+            println!(" timed out       FAIL");
+            failed += 1;
+        }
     }
 
     // ── 6. Button release ────────────────────────────────────────
     println!("\n[6/6] Button release");
     println!("      Release the button now.");
     match wait_for_state(&handle, |s| !s.button, DOCTOR_TIMEOUT) {
-        Some(_) => { println!(" detected!       PASS"); passed += 1; }
-        None =>    { println!(" timed out       FAIL"); failed += 1; }
+        Some(_) => {
+            println!(" detected!       PASS");
+            passed += 1;
+        }
+        None => {
+            println!(" timed out       FAIL");
+            failed += 1;
+        }
     }
 
     // ── Summary ──────────────────────────────────────────────────

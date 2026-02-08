@@ -1,0 +1,34 @@
+# Pre-commit hooks for s1500d
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Rust formatting (clippy is too slow for pre-commit, use CI instead)
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        name: cargo fmt
+        args: ['--all', '--']
+
+# CI configuration
+ci:
+  # Skip hooks that require cargo (CI runs these separately)
+  skip: [fmt]
+  autoupdate_schedule: monthly
