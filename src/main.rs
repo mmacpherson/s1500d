@@ -71,6 +71,7 @@ const MAX_POLL_FAILURES: u32 = 3;
 
 /// Wrap a SCSI CDB in the 31-byte Fujitsu USB command envelope.
 fn envelope(cdb: &[u8]) -> [u8; 31] {
+    debug_assert!(cdb.len() <= 12, "CDB exceeds 12-byte envelope capacity");
     let mut buf = [0u8; 31];
     buf[0] = 0x43;
     buf[19..19 + cdb.len()].copy_from_slice(cdb);
@@ -90,12 +91,16 @@ pub(crate) struct State {
 }
 
 impl State {
-    fn from_response(buf: &[u8]) -> Self {
-        Self {
-            paper: buf.get(3).is_some_and(|&b| b & 0x80 == 0),
-            // bit 5 (0x20) = button held; bit 0 (0x01) = button momentary/tap
-            button: buf.get(4).is_some_and(|&b| b & 0x21 != 0),
+    fn from_response(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 5 {
+            debug!("short response: {} bytes (need 5)", buf.len());
+            return None;
         }
+        Some(Self {
+            paper: buf[3] & 0x80 == 0,
+            // bit 5 (0x20) = button held; bit 0 (0x01) = button momentary/tap
+            button: buf[4] & 0x21 != 0,
+        })
     }
 }
 
@@ -233,7 +238,7 @@ pub(crate) fn poll_status(handle: &rusb::DeviceHandle<rusb::Context>) -> Option<
             .join(" ")
     );
 
-    Some(State::from_response(&buf[..n]))
+    State::from_response(&buf[..n])
 }
 
 /// Release the USB handle so another process (scanimage) can claim the device.
@@ -241,6 +246,21 @@ fn release_usb(handle: rusb::DeviceHandle<rusb::Context>) {
     let _ = handle.release_interface(IFACE);
     drop(handle);
     debug!("usb: released for handler");
+}
+
+/// Release USB, run handler, reclaim device, and re-read baseline state.
+/// Returns the new handle + fresh state, or None if the device is gone.
+fn run_handler_with_usb(
+    handle: rusb::DeviceHandle<rusb::Context>,
+    ctx: &rusb::Context,
+    script: &str,
+    args: &[&str],
+) -> Option<(rusb::DeviceHandle<rusb::Context>, State)> {
+    release_usb(handle);
+    run_handler(script, args);
+    let h = try_open(ctx)?;
+    let state = poll_status(&h)?;
+    Some((h, state))
 }
 
 // ── Event dispatch ───────────────────────────────────────────────────
@@ -279,6 +299,7 @@ fn print_usage() {
          \x20 s1500d HANDLER           Run HANDLER on each raw event\n\
          \x20 s1500d -c CONFIG.toml    Gesture detection + profile dispatch\n\
          \x20 s1500d --doctor          Interactive hardware verification\n\
+         \x20 s1500d --version         Show version\n\
          \x20 s1500d --help            Show this message\n\
          \n\
          Handler mode (s1500d HANDLER) — handler receives the event name as $1:\n\
@@ -352,21 +373,12 @@ fn run(mode: Mode) -> ! {
                     Action::Continue => {}
                     Action::RunHandler(script, args) => {
                         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                        release_usb(handle);
-                        run_handler(&script, &arg_refs);
-                        match try_open(&ctx) {
-                            Some(h) => {
+                        match run_handler_with_usb(handle, &ctx, &script, &arg_refs) {
+                            Some((h, fresh)) => {
                                 handle = h;
-                                if let Some(fresh) = poll_status(&handle) {
-                                    prev = Some(fresh);
-                                } else {
-                                    break 'poll;
-                                }
+                                prev = Some(fresh);
                             }
-                            None => {
-                                debug!("usb: reclaim failed after handler, device gone");
-                                break 'poll;
-                            }
+                            None => break 'poll,
                         }
                     }
                 }
@@ -410,23 +422,14 @@ fn run(mode: Mode) -> ! {
                         }
                         Action::RunHandler(script, args) => {
                             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                            release_usb(handle);
-                            run_handler(&script, &arg_refs);
-                            match try_open(&ctx) {
-                                Some(h) => {
+                            match run_handler_with_usb(handle, &ctx, &script, &arg_refs) {
+                                Some((h, fresh)) => {
                                     handle = h;
-                                    if let Some(fresh) = poll_status(&handle) {
-                                        prev = Some(fresh);
-                                        thread::sleep(POLL_INTERVAL);
-                                        continue 'poll;
-                                    } else {
-                                        break 'poll;
-                                    }
+                                    prev = Some(fresh);
+                                    thread::sleep(POLL_INTERVAL);
+                                    continue 'poll;
                                 }
-                                None => {
-                                    debug!("usb: reclaim failed, device gone");
-                                    break 'poll;
-                                }
+                                None => break 'poll,
                             }
                         }
                     }
@@ -540,7 +543,7 @@ fn emit_handler(mode: &Mode, args: &[&str]) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Handle --help/--doctor before logger init (they don't need it).
+    // Handle --help/--version/--doctor before logger init (they don't need it).
     match args.get(1).map(String::as_str) {
         Some("--help" | "-h") => {
             print_usage();
@@ -571,14 +574,12 @@ fn main() {
         None
     };
 
-    // Use config log_level as default filter if RUST_LOG is not set.
-    let default_filter = if std::env::var("RUST_LOG").is_ok() {
-        "info" // env var takes priority; from_env will use it regardless of this fallback
-    } else {
-        config.as_ref().map_or("info", |c| c.log_level.as_str())
-    };
+    // RUST_LOG from environment wins; otherwise use config or default to "info".
+    let log_filter = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| config.as_ref().map_or("info", |c| &c.log_level).to_string());
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
+    env_logger::Builder::new()
+        .parse_filters(&log_filter)
         .format_timestamp_secs()
         .init();
 
@@ -614,7 +615,7 @@ mod tests {
     fn state_idle_scanner() {
         // byte 3 = 0x80 (hopper empty), byte 4 = 0x00 (button not pressed)
         let buf = [0, 0, 0, 0x80, 0x00, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(!s.paper);
         assert!(!s.button);
     }
@@ -623,7 +624,7 @@ mod tests {
     fn state_paper_present() {
         // byte 3 = 0x00 (bit 7 clear = paper present)
         let buf = [0, 0, 0, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(s.paper);
         assert!(!s.button);
     }
@@ -632,7 +633,7 @@ mod tests {
     fn state_button_held() {
         // byte 4 = 0x20 (bit 5 = button held)
         let buf = [0, 0, 0, 0x80, 0x20, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(!s.paper);
         assert!(s.button);
     }
@@ -641,7 +642,7 @@ mod tests {
     fn state_button_momentary_tap() {
         // byte 4 = 0x01 (bit 0 = momentary tap)
         let buf = [0, 0, 0, 0x80, 0x01, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(s.button);
     }
 
@@ -649,7 +650,7 @@ mod tests {
     fn state_button_both_bits() {
         // byte 4 = 0x21 (both button bits set)
         let buf = [0, 0, 0, 0x80, 0x21, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(s.button);
     }
 
@@ -657,36 +658,31 @@ mod tests {
     fn state_paper_and_button() {
         // byte 3 = 0x00 (paper present), byte 4 = 0x20 (button held)
         let buf = [0, 0, 0, 0x00, 0x20, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(s.paper);
         assert!(s.button);
     }
 
     #[test]
     fn state_short_buffer() {
-        // Too short for byte 3 or 4 — should default to false
-        let s = State::from_response(&[0, 0]);
-        assert!(!s.paper);
-        assert!(!s.button);
+        assert!(State::from_response(&[0, 0]).is_none());
     }
 
     #[test]
     fn state_empty_buffer() {
-        let s = State::from_response(&[]);
-        assert!(!s.paper);
-        assert!(!s.button);
+        assert!(State::from_response(&[]).is_none());
     }
 
     #[test]
     fn state_other_bits_ignored() {
         // byte 3 has non-0x80 bits set but bit 7 is set → no paper
         let buf = [0, 0, 0, 0xFF, 0x00, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(!s.paper);
 
         // byte 4 has bits set but not 0x20 or 0x01 → no button
         let buf = [0, 0, 0, 0x80, 0xDE, 0, 0, 0, 0, 0, 0, 0];
-        let s = State::from_response(&buf);
+        let s = State::from_response(&buf).unwrap();
         assert!(!s.button);
     }
 

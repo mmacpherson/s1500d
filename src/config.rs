@@ -58,10 +58,14 @@ pub fn load_config(path: &str) -> Config {
         eprintln!("s1500d: cannot read config {path}: {e}");
         std::process::exit(1);
     });
-    parse_config(&text).unwrap_or_else(|e| {
+    let config = parse_config(&text).unwrap_or_else(|e| {
         eprintln!("s1500d: {e}");
         std::process::exit(1);
-    })
+    });
+    if !std::path::Path::new(&config.handler).exists() {
+        eprintln!("s1500d: warning: handler not found: {}", config.handler);
+    }
+    config
 }
 
 #[cfg(test)]
