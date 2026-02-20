@@ -42,7 +42,7 @@ it could trigger on paper feed. Sometimes it would wait for nearly a minute
 before actually beginning to scan the document. I'd followed the docs and the
 ever-amazing [Arch
 Wiki](https://wiki.archlinux.org/title/Scanner_Button_Daemon), and it's
-ultimately probably user error. But now there's Claude Code, and I wanted to see
+ultimately probably user error. But now there's [Claude Code](https://docs.anthropic.com/en/docs/claude-code), and I wanted to see
 if I could get something that works more consistently for me.
 
 I asked Claude to help me figure out how the scanner was actually communicating
@@ -75,6 +75,10 @@ some other piece of hardware, this might be a useful case study.
 ## installation
 
 ### Arch Linux (AUR)
+
+I published an [AUR package](https://aur.archlinux.org/packages/s1500d) for my
+own convenience, but in case one of the other six people running an S1500 on
+Arch Linux reads this:
 
 ```sh
 paru -S s1500d
