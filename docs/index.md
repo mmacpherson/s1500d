@@ -18,10 +18,9 @@ The ScanSnap S1500 is a fantastic color duplex document scanner. It launched in
 2009 and has been out of production for years, but I've had mine since 2013 and
 it still works great. We use it as the front door to our paperless household
 ([a well-trodden path](https://toolsandtoys.net/guides/the-tools-and-toys-paperless-guide/)),
-paired with the excellent
-[paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) document
-management system and some LLM postprocessing we do using
-[Modal](https://modal.com) against the paperless-ngx API.
+paired with [paperless-ngx](https://github.com/paperless-ngx/paperless-ngx)
+and some LLM postprocessing via [Modal](https://modal.com), all running on an
+Arch Linux homelab server.
 
 On Mac and Windows, the software situation is bleak — Fujitsu's current
 [ScanSnap Home](https://www.pfu.ricoh.com/global/scanners/scansnap/dl/) doesn't
