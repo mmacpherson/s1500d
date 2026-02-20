@@ -243,18 +243,17 @@ apt install sane-utils img2pdf
 dnf install sane-backends img2pdf
 ```
 
-## gesture mode
+## configuration
 
-Running s1500d with a handler script directly is fine for simple setups, but
-what if you want different scan settings depending on the situation — standard
-vs. legal size, color vs. grayscale, simplex vs. duplex?
+Running s1500d with `-c` enables config mode, which reads a TOML file:
 
-That's what config mode (`-c`) is for. Instead of passing raw button events to
-your handler, s1500d counts rapid button presses within a timeout window and
-maps the count to a named profile.
+```sh
+s1500d -c config.toml
+```
+
+Here's a full example:
 
 ```toml
-# config.toml
 handler = "/path/to/your/handler.sh"
 gesture_timeout_ms = 400
 log_level = "info"
@@ -262,20 +261,83 @@ log_level = "info"
 [profiles]
 1 = "standard"
 2 = "legal"
+3 = "photo"
 ```
 
-Press the button once, wait 400ms, and your handler gets called with `scan standard`. Press twice quickly and it gets `scan legal`. Unmapped press counts are logged and ignored.
+### config keys
 
-Run it with:
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `handler` | yes | — | Path to the script called on events |
+| `gesture_timeout_ms` | no | `400` | How long to wait (in ms) for additional button presses before dispatching a gesture |
+| `log_level` | no | `"info"` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this if set. |
+| `profiles` | no | (empty) | Map of press count → profile name (see below). Profile names are arbitrary labels — your handler script decides what they mean. |
 
-```sh
-s1500d -c config.toml
+### events in config mode
+
+In config mode, your handler receives these events as `$1`:
+
+| Event | `$2` | When it fires |
+|-------|------|---------------|
+| `scan` | profile name | Button gesture completed (press count mapped to a profile) |
+| `paper-in` | — | Paper inserted into feeder |
+| `paper-out` | — | Paper removed from feeder |
+| `device-arrived` | — | Scanner lid opened (USB device appeared) |
+| `device-left` | — | Scanner lid closed (USB device removed) |
+
+### gesture detection
+
+Instead of passing raw `button-down`/`button-up` events, config mode counts
+rapid button presses within the `gesture_timeout_ms` window and maps the count
+to a named profile via the `[profiles]` table.
+
+Press the button once, wait 400ms, and your handler gets called with
+`scan standard`. Press twice quickly and it gets `scan legal`. Three times for
+`scan photo`. Unmapped press counts are logged and ignored.
+
+The config above maps three presses, but your handler can support as many
+profiles as you like — you just map the ones you use most often to button
+gestures. Here are some natural options for reference:
+
+```bash
+case "$PROFILE" in
+    standard)
+        scanimage --source="ADF Duplex" --mode=Color \
+            --resolution=300 --format=tiff \
+            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
+        ;;
+    legal)
+        scanimage --source="ADF Duplex" --mode=Color \
+            --resolution=300 --page-width=215.872 --page-height=355.6 \
+            -x 215.872 -y 355.6 --format=tiff \
+            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
+        ;;
+    a4)
+        scanimage --source="ADF Duplex" --mode=Color \
+            --resolution=300 --page-width=210 --page-height=297 \
+            -x 210 -y 297 --format=tiff \
+            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
+        ;;
+    photo)
+        scanimage --source="ADF Front" --mode=Color \
+            --resolution=600 --format=tiff \
+            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
+        ;;
+    standard-bw)
+        scanimage --source="ADF Duplex" --mode=Lineart \
+            --resolution=300 --format=tiff \
+            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
+        ;;
+    standard-gray)
+        scanimage --source="ADF Duplex" --mode=Gray \
+            --resolution=300 --format=tiff \
+            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
+        ;;
+esac
 ```
 
-Your handler script just switches on the profile name — the scan-to-PDF handler
-above already does this, using the profile as a filename prefix. You could go
-further and change `scanimage` flags per profile (different resolution, page
-size, simplex vs. duplex, etc.).
+The scan-to-PDF handler above uses the profile as a filename prefix. You could
+extend it with a case block like this to vary the scan parameters per profile.
 
 ## running as a systemd service
 
