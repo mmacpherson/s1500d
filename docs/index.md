@@ -5,6 +5,8 @@ title: s1500d — one-touch scanning on Linux without scanbd
 
 # s1500d
 
+*[Mike Macpherson](https://github.com/mmacpherson)*
+
 **TL;DR:** s1500d is a tiny Rust daemon that monitors the Fujitsu ScanSnap S1500
 via direct USB and runs your script when you press the scan button or insert
 paper. One USB command per poll cycle, no SANE stack, no scanbd. Open the lid,
@@ -15,7 +17,8 @@ press the button, get a PDF.
 The ScanSnap S1500 is a fantastic color duplex document scanner. It launched in
 2009 and has been out of production for years, but I've had mine since 2013 and
 it still works great. We use it as the front door to our paperless household
-([TODO][TODO]), paired with the excellent
+([a well-trodden path](https://toolsandtoys.net/guides/the-tools-and-toys-paperless-guide/)),
+paired with the excellent
 [paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) document
 management system and some LLM postprocessing we do using
 [Modal](https://modal.com) against the paperless-ngx API.
@@ -347,6 +350,14 @@ s1500d exists because other people documented their ScanSnap-on-Linux setups and
 - [Kevin Liu — Automatic Scanning on Linux with the ScanSnap S500M](https://kliu.io/post/linux-scansnap-s500m/) (2019) — scanbd setup for a different ScanSnap model
 - [Neil Brown — Scanning to Debian 12 with ix500](https://neilzone.co.uk/2024/01/scanning-to-debian-12-with-a-scansnap-ix500) (2024) — scanbd on Debian with the ix500
 - [J.B. Rainsberger — Use Your ScanSnap Scanner with Linux](https://blog.jbrains.ca/permalink/use-your-scansnap-scanner-with-linux) — general ScanSnap + Linux guidance
+
+Going paperless at home:
+
+- [Tools and Toys — Setting Up and Maintaining a Paperless Home and Office](https://toolsandtoys.net/guides/the-tools-and-toys-paperless-guide/) — the classic ScanSnap-centric paperless guide
+- [DocumentSnap](https://www.documentsnap.com/) — Brooks Duncan's site dedicated to going paperless, including the [Unofficial ScanSnap Setup Guide](https://www.documentsnap.com/unofficial-scansnap-setup-guide-fourth-edition/)
+- [Techno Tim — Self-Hosted Paperless-ngx + Local AI](https://technotim.com/posts/paperless-ngx-local-ai/) — modern Docker-based setup with local AI for OCR/classification
+- [Akash Rajpurohit — Paperless-ngx: Self-hosted document management that actually makes sense](https://akashrajpurohit.com/blog/selfhost-paperless-ngx-for-document-management/)
+- [Redeeming Productivity — The Ultimate Guide to Going Paperless at Home](https://redeemingproductivity.com/paperless/)
 
 And the tools this project depends on or relates to:
 
