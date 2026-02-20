@@ -1,0 +1,8 @@
+title: s1500d
+description: A minimal Linux daemon for one-touch scanning with the Fujitsu ScanSnap S1500
+baseurl: /s1500d
+url: https://mmacpherson.github.io
+theme: minima
+
+exclude:
+  - explore.py

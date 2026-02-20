@@ -1,3 +1,8 @@
+---
+layout: default
+title: USB protocol reference
+---
+
 # ScanSnap S1500 USB Protocol
 
 ## Why direct USB?
