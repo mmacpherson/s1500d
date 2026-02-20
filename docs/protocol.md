@@ -86,7 +86,7 @@ Bit 7 of byte 4 (`0x80`) is set when the scanner first powers on and has never h
 ### Example responses
 
 ```
-Baseline (no paper, button untouched):  00 00 00 80 80 01 80 00 00 00 00 00
+Baseline (no paper, button untouched):   00 00 00 80 80 01 80 00 00 00 00 00
 Button held:                             00 00 00 80 20 01 80 00 00 00 00 00
 Button released:                         00 00 00 80 00 01 80 00 00 00 00 00
 Paper inserted:                          00 00 00 00 00 01 80 00 00 00 00 00
