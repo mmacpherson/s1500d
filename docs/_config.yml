@@ -5,4 +5,4 @@ url: https://mmacpherson.github.io
 theme: minima
 
 exclude:
-  - explore.py
+- explore.py

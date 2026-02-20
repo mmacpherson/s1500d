@@ -1,9 +1,7 @@
 ---
 layout: default
-title: s1500d — one-touch scanning on Linux without scanbd
+title: one-touch scanning on Linux without scanbd
 ---
-
-# s1500d
 
 *[Mike Macpherson](https://github.com/mmacpherson)*
 
