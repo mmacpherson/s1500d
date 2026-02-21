@@ -5,7 +5,7 @@
 # log_level: error, warn, info, debug, trace (default "info"; RUST_LOG overrides)
 # profiles: map press count → profile name passed to handler as "scan <profile>"
 
-gesture_timeout_ms = 400
+gesture_timeout_ms = 600
 handler = "/usr/share/s1500d/handler-example.sh"
 log_level = "info"
 

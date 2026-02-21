@@ -15,7 +15,7 @@ struct RawConfig {
 }
 
 fn default_gesture_timeout_ms() -> u64 {
-    400
+    600
 }
 
 fn default_log_level() -> String {
