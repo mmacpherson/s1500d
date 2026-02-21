@@ -98,7 +98,7 @@ mod tests {
     fn parse_minimal_config_uses_defaults() {
         let toml = r#"handler = "/bin/handler.sh""#;
         let config = parse_config(toml).unwrap();
-        assert_eq!(config.gesture_timeout_ms, 400);
+        assert_eq!(config.gesture_timeout_ms, 600);
         assert_eq!(config.log_level, "info");
         assert!(config.profiles.is_empty());
     }
@@ -131,6 +131,6 @@ mod tests {
     #[test]
     fn gesture_timeout_conversion() {
         let config = parse_config(r#"handler = "/bin/h.sh""#).unwrap();
-        assert_eq!(config.gesture_timeout(), Duration::from_millis(400));
+        assert_eq!(config.gesture_timeout(), Duration::from_millis(600));
     }
 }
