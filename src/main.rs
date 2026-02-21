@@ -806,7 +806,7 @@ mod tests {
     fn test_config() -> Config {
         Config {
             handler: "/bin/test-handler.sh".into(),
-            gesture_timeout_ms: 400,
+            gesture_timeout_ms: 600,
             log_level: "info".into(),
             profiles: HashMap::from([(1, "standard".into()), (2, "legal".into())]),
         }
