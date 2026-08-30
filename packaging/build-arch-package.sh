@@ -39,10 +39,17 @@ sed -i \
     -e "s/^sha256sums=.*/sha256sums=('$SOURCE_SHA')/" \
     "$STAGE/PKGBUILD"
 
-docker run --rm --volume "$STAGE:/build" archlinux:base-devel sh -euxc '
+docker run --rm \
+    --env BUILD_UID="$(id -u)" \
+    --env BUILD_GID="$(id -g)" \
+    --volume "$STAGE:/build" \
+    archlinux:base-devel sh -euxc '
     pacman -Syu --noconfirm --needed rust libusb
-    useradd --create-home builder
-    chown -R builder:builder /build
+    if ! getent group "$BUILD_GID" >/dev/null; then
+        groupadd --gid "$BUILD_GID" builder
+    fi
+    useradd --create-home --uid "$BUILD_UID" --gid "$BUILD_GID" builder
+    chown -R "$BUILD_UID:$BUILD_GID" /build
     runuser -u builder -- sh -c "cd /build && makepkg --cleanbuild --noconfirm"
 '
 
