@@ -14,7 +14,7 @@ jobs:
     name: Rust 1.85
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
     - run: rustup toolchain install 1.85 --profile minimal
     - run: cargo +1.85 test --all-targets --locked
@@ -23,7 +23,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - run: rustup component add rustfmt
     - run: cargo fmt --check
 
@@ -31,7 +31,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
     - uses: Swatinem/rust-cache@v2
     - run: rustup component add clippy
@@ -41,7 +41,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
     - uses: Swatinem/rust-cache@v2
     - run: cargo build --release
@@ -50,7 +50,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
     - uses: Swatinem/rust-cache@v2
     - run: cargo test
