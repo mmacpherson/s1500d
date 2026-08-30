@@ -65,7 +65,7 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 const USB_TIMEOUT: Duration = Duration::from_millis(1000);
 const STATUS_TIMEOUT: Duration = Duration::from_millis(200);
-const MAX_POLL_FAILURES: u32 = 3;
+const MAX_POLL_FAILURES: u32 = 20;
 
 // ── Fujitsu USB protocol ─────────────────────────────────────────────
 
