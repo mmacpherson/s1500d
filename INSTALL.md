@@ -17,11 +17,10 @@ the daemon but does not produce scans.
 
 ## GitHub release packages
 
-Starting with v0.3.1, tagged releases include x86-64 deb, rpm, Arch
-`.pkg.tar.zst`, and generic tar packages plus SHA-256 checksums. The native
-packages install the binary, systemd unit, udev rule, dedicated service account
-definition, example config, and handlers. They do not enable or start the
-service.
+GitHub releases include x86-64 deb, rpm, Arch `.pkg.tar.zst`, and generic tar
+packages plus SHA-256 checksums. The native packages install the binary, systemd
+unit, udev rule, dedicated service account definition, example config, and
+handlers. They do not enable or start the service.
 
 Use the deb on Debian/Ubuntu, the rpm on Fedora, and the `.pkg.tar.zst` with
 `pacman -U` on Arch Linux. Arch users who prefer to build locally can inspect
@@ -89,8 +88,8 @@ lsusb -d 04c5:11a2
 s1500d --doctor
 ```
 
-After installing a v0.3.1-or-newer native package, also run the check as the
-same dedicated account used by the service:
+After installing a native package, also run the check as the same dedicated
+account used by the service:
 
 ```sh
 sudo -u s1500d s1500d --doctor

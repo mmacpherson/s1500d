@@ -3,7 +3,6 @@ layout: default
 title: one-touch scanning on Linux without scanbd
 ---
 
-*[Mike Macpherson](https://github.com/mmacpherson)* ·
 *[source and installation](https://github.com/mmacpherson/s1500d)*
 
 **TL;DR:** s1500d is a tiny Rust daemon that monitors the Fujitsu ScanSnap S1500
@@ -13,14 +12,18 @@ handler configured: open the lid, press the button, get a PDF.
 
 ## should you use this?
 
-s1500d is deliberately for one setup: a **Fujitsu ScanSnap S1500** (USB ID
-`04c5:11a2`) attached to a **Linux** machine. It is useful when SANE can already
-scan from the device and you want the physical button or paper sensor to run a
-script without leaving a GUI open.
+s1500d is deliberately for one setup: a **Fujitsu ScanSnap S1500** attached to a
+**Linux** machine. You can confirm the exact model with `lsusb`; an S1500 appears
+as `ID 04c5:11a2`. It is useful when you want the physical button or paper
+sensor to run a script without leaving a GUI open.
 
-It is not a scanner driver, a scanning GUI, or a general-purpose button daemon.
-Other ScanSnap models and macOS/Windows are not currently supported. If that
-still sounds like your setup, the quickest safe evaluation is:
+s1500d itself does not acquire images or require SANE; it detects hardware
+events and invokes your handler. The example scan-to-PDF handler uses SANE's
+`scanimage`, but your handler can run any command you choose.
+
+It is specific to this scanner model rather than a general-purpose button
+daemon. Other ScanSnap models and macOS/Windows are not currently supported. If
+that still sounds like your setup, the quickest safe evaluation is:
 
 ```sh
 # Arch Linux
@@ -38,11 +41,13 @@ For other Linux distributions and service setup, use the full
 If you prefer an assisted install, paste this into Codex, Claude Code, or
 another coding agent with web access:
 
-> Help me evaluate and install https://github.com/mmacpherson/s1500d. First
-> confirm that this machine runs Linux and that my scanner is exactly a ScanSnap
-> S1500 (`04c5:11a2`). Read README.md and INSTALL.md, explain the changes you
-> propose, and get event monitoring working before configuring a scan handler
-> or enabling the systemd service. Ask before using sudo.
+```text
+Help me evaluate and install https://github.com/mmacpherson/s1500d. First
+confirm that this machine runs Linux and that my scanner is exactly a ScanSnap
+S1500 (`04c5:11a2`). Read README.md and INSTALL.md, explain the changes you
+propose, and get event monitoring working before configuring a scan handler
+or enabling the systemd service. Ask before using sudo.
+```
 
 ## the problem
 
