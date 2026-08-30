@@ -54,7 +54,7 @@ jobs:
         rpm --query --package --list dist/*.rpm
         tar --list --file dist/*.pkg.tar.zst
     - name: Attest artifacts
-      uses: actions/attest-build-provenance@v3
+      uses: actions/attest-build-provenance@v4
       with:
         subject-path: dist/*
     - name: Create draft GitHub release
