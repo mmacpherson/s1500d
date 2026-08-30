@@ -1,0 +1,56 @@
+name: s1500d
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${NFPM_VERSION}
+release: '1'
+section: utils
+priority: optional
+maintainer: Mike Macpherson <mmacpherson@users.noreply.github.com>
+description: |-
+  Event daemon for the Fujitsu ScanSnap S1500.
+  Watches the scanner's USB button and paper sensors and invokes a handler.
+vendor: s1500d contributors
+homepage: https://github.com/mmacpherson/s1500d
+license: MIT OR Apache-2.0
+
+scripts:
+  postinstall: packaging/postinstall.sh
+
+contents:
+- src: target/release/s1500d
+  dst: /usr/bin/s1500d
+  file_info:
+    mode: 0755
+- src: contrib/s1500d.service
+  dst: /usr/lib/systemd/system/s1500d.service
+- src: contrib/99-scansnap.rules
+  dst: /usr/lib/udev/rules.d/99-scansnap.rules
+- src: contrib/s1500d.sysusers
+  dst: /usr/lib/sysusers.d/s1500d.conf
+- src: contrib/config.toml
+  dst: /etc/s1500d/config.toml
+  type: config|noreplace
+- src: contrib/handler-example.sh
+  dst: /usr/share/s1500d/handler-example.sh
+  file_info:
+    mode: 0755
+- src: contrib/handler-scan-to-pdf.sh
+  dst: /usr/share/s1500d/handler-scan-to-pdf.sh
+  file_info:
+    mode: 0755
+- src: LICENSE-MIT
+  dst: /usr/share/licenses/s1500d/LICENSE-MIT
+- src: LICENSE-APACHE
+  dst: /usr/share/licenses/s1500d/LICENSE-APACHE
+
+overrides:
+  deb:
+    depends:
+    - libusb-1.0-0
+    - systemd
+    - udev
+  rpm:
+    depends:
+    - libusb1
+    - systemd
+    - systemd-udev

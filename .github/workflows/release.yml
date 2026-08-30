@@ -1,0 +1,68 @@
+name: Release packages
+
+on:
+  push:
+    tags:
+    - v[0-9]+.[0-9]+.[0-9]+
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  NFPM_VERSION_PIN: v2.47.0
+
+jobs:
+  packages:
+    name: Build release packages
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install build dependencies
+      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev rpm zstd
+    - name: Check tag matches Cargo package version
+      shell: bash
+      run: |
+        tag_version=${GITHUB_REF_NAME#v}
+        cargo_version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)
+        test "$tag_version" = "$cargo_version"
+    - name: Validate source
+      run: |
+        rustup component add rustfmt clippy
+        cargo fmt --check
+        cargo test --all-targets --locked
+        cargo clippy --all-targets --locked -- -D warnings
+    - name: Build binary
+      run: cargo build --release --locked
+    - name: Install nFPM
+      run: |
+        go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION_PIN}"
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+    - name: Build deb, rpm, and tar packages
+      shell: bash
+      run: |
+        packaging/build-packages.sh "${GITHUB_REF_NAME#v}"
+        packaging/build-arch-package.sh "${GITHUB_REF_NAME#v}"
+        (cd dist && sha256sum ./*.deb ./*.rpm ./*.tar.gz ./*.pkg.tar.zst > SHA256SUMS)
+    - name: Inspect package contents
+      run: |
+        dpkg-deb --info dist/*.deb
+        dpkg-deb --contents dist/*.deb
+        rpm --query --package --info dist/*.rpm
+        rpm --query --package --list dist/*.rpm
+        tar --list --file dist/*.pkg.tar.zst
+    - name: Attest artifacts
+      uses: actions/attest-build-provenance@v3
+      with:
+        subject-path: dist/*
+    - name: Create draft GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" dist/* \
+          --draft \
+          --verify-tag \
+          --generate-notes \
+          --notes "Packages install s1500d without enabling or starting it. Follow INSTALL.md and complete the hardware checks before enabling the service."

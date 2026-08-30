@@ -3,12 +3,46 @@ layout: default
 title: one-touch scanning on Linux without scanbd
 ---
 
-*[Mike Macpherson](https://github.com/mmacpherson)*
+*[Mike Macpherson](https://github.com/mmacpherson)* ·
+*[source and installation](https://github.com/mmacpherson/s1500d)*
 
 **TL;DR:** s1500d is a tiny Rust daemon that monitors the Fujitsu ScanSnap S1500
 via direct USB and runs your script when you press the scan button or insert
-paper. One USB command per poll cycle, no SANE stack, no scanbd. Open the lid,
-press the button, get a PDF.
+paper. One USB command per poll cycle, no SANE stack, no scanbd. With a scan
+handler configured: open the lid, press the button, get a PDF.
+
+## should you use this?
+
+s1500d is deliberately for one setup: a **Fujitsu ScanSnap S1500** (USB ID
+`04c5:11a2`) attached to a **Linux** machine. It is useful when SANE can already
+scan from the device and you want the physical button or paper sensor to run a
+script without leaving a GUI open.
+
+It is not a scanner driver, a scanning GUI, or a general-purpose button daemon.
+Other ScanSnap models and macOS/Windows are not currently supported. If that
+still sounds like your setup, the quickest safe evaluation is:
+
+```sh
+# Arch Linux
+paru -S s1500d
+
+# Open the scanner lid, then:
+lsusb -d 04c5:11a2
+s1500d --doctor
+s1500d  # watch events; does not start a scan
+```
+
+For other Linux distributions and service setup, use the full
+[installation guide](https://github.com/mmacpherson/s1500d/blob/main/INSTALL.md).
+
+If you prefer an assisted install, paste this into Codex, Claude Code, or
+another coding agent with web access:
+
+> Help me evaluate and install https://github.com/mmacpherson/s1500d. First
+> confirm that this machine runs Linux and that my scanner is exactly a ScanSnap
+> S1500 (`04c5:11a2`). Read README.md and INSTALL.md, explain the changes you
+> propose, and get event monitoring working before configuring a scan handler
+> or enabling the systemd service. Ask before using sudo.
 
 ## the problem
 
@@ -31,7 +65,7 @@ it's not a great long-term bet. On Linux, none of that matters — SANE's
 workflow: you want to press the physical scan button and have something happen
 automatically, without a GUI open and waiting.
 
-The usual answer is [scanbd](https://github.com/wilhelmbot/scanbd), a
+The usual answer is [scanbd](https://gitlab.com/sane-project/frontend/scanbd), a
 general-purpose scanner button daemon. I've had mixed results with scanbd — over
 different OSes and installations, I've usually gotten it to work, but I
 struggled with it. Sometimes I couldn't get button-press detection to work, but
@@ -52,7 +86,7 @@ button, release the button — recording which bits changed at each step. Betwee
 that and reading the SANE `fujitsu` backend source, we reverse-engineered the
 USB protocol. It's actually pretty simple: one command (`GET_HW_STATUS`), 12
 bytes of response, a few status bits to decode. Full details in the
-[protocol reference](protocol).
+[protocol reference](https://mmacpherson.github.io/s1500d/protocol.html).
 
 scanbd takes a different approach — it loads the full SANE stack, opens a
 connection to the backend, and polls by reading SANE options, about 25 SCSI
@@ -101,10 +135,14 @@ dnf install libusb1-devel
 Then either:
 
 ```sh
-# Install via cargo
+# Get the source
+git clone https://github.com/mmacpherson/s1500d.git
+cd s1500d
+
+# Install only the binary in your Cargo bin directory
 cargo install --path .
 
-# Or via make (installs systemd unit, udev rules, config, etc.)
+# Or install the binary plus systemd, udev, config, and handler files
 make release
 sudo make install
 ```
@@ -252,7 +290,7 @@ Here's a full example:
 
 ```toml
 handler = "/path/to/your/handler.sh"
-gesture_timeout_ms = 400
+gesture_timeout_ms = 600
 log_level = "info"
 
 [profiles]
@@ -266,7 +304,7 @@ log_level = "info"
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `handler` | yes | — | Path to the script called on events |
-| `gesture_timeout_ms` | no | `400` | How long to wait (in ms) for additional button presses before dispatching a gesture |
+| `gesture_timeout_ms` | no | `600` | How long to wait (in ms) for additional button presses before dispatching a gesture |
 | `log_level` | no | `"info"` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this if set. |
 | `profiles` | no | (empty) | Map of press count → profile name (see below). Profile names are arbitrary labels — your handler script decides what they mean. |
 
@@ -288,7 +326,7 @@ Instead of passing raw `button-down`/`button-up` events, config mode counts
 rapid button presses within the `gesture_timeout_ms` window and maps the count
 to a named profile via the `[profiles]` table.
 
-Press the button once, wait 400ms, and your handler gets called with
+Press the button once, wait 600ms, and your handler gets called with
 `scan standard`. Press twice quickly and it gets `scan legal`. Three times for
 `scan photo`. Unmapped press counts are logged and ignored.
 
@@ -338,54 +376,28 @@ extend it with a case block like this to vary the scan parameters per profile.
 
 ## running as a systemd service
 
-For a proper always-on setup, you'll want a udev rule for non-root USB access and a systemd unit to keep the daemon running.
+The repository ships a udev rule and systemd unit as starting points for an
+always-on setup. Review them for your machine rather than treating them as a
+turnkey policy:
 
-### udev rule
+- The udev rule grants the dedicated `s1500d` account access to this USB device
+  and uses `uaccess` for the active desktop user.
+- The unit runs as `s1500d`, not root.
+- `ProtectHome=true` prevents writes to users' homes; the unit sets `SCAN_DIR`
+  to `/var/lib/s1500d/scans` instead.
+- The default handler logs events but does not scan documents.
 
-Install the udev rule so s1500d can access the scanner without root:
-
-```sh
-sudo cp contrib/99-scansnap.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-```
-
-The rule itself is simple — it matches the S1500's USB vendor/product ID and opens permissions:
-
-```
-SUBSYSTEM=="usb", ATTR{idVendor}=="04c5", ATTR{idProduct}=="11a2", MODE="0666", TAG+="uaccess"
-```
-
-### systemd unit
-
-```ini
-[Unit]
-Description=ScanSnap S1500 event daemon
-Documentation=https://github.com/mmacpherson/s1500d
-After=local-fs.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/s1500d -c /etc/s1500d/config.toml
-Restart=always
-RestartSec=5
-
-# Hardening
-NoNewPrivileges=true
-ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Copy it into place and enable:
+Test your handler in the foreground, edit `/etc/s1500d/config.toml`, and only
+then enable the installed unit:
 
 ```sh
-sudo cp contrib/s1500d.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now s1500d
 ```
 
-If you installed via the AUR package, the unit and udev rule are already in the right places — just enable the service.
+See the
+[installation guide](https://github.com/mmacpherson/s1500d/blob/main/INSTALL.md)
+for package and from-source paths.
 
 ## diagnosing hardware
 
@@ -403,16 +415,16 @@ The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI comma
 
 Door state isn't in the status response at all. Opening the ADF lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect). So the daemon has two loops: an outer one watching for USB connect/disconnect, and an inner one polling `GET_HW_STATUS` while the device is present.
 
-The protocol was reverse-engineered from USB captures and the SANE `fujitsu` backend source, then empirically verified with a physical scanner. The full details — including a SANE bit-map discrepancy I found during testing — are in the [protocol reference](protocol).
+The protocol was reverse-engineered from USB captures and the SANE `fujitsu` backend source, then empirically verified with a physical scanner. The full details — including a SANE bit-map discrepancy I found during testing — are in the [protocol reference](https://mmacpherson.github.io/s1500d/protocol.html).
 
 ## references & prior art
 
 s1500d exists because other people documented their ScanSnap-on-Linux setups and I could build on their work. These are the posts that informed the project:
 
-- [Virantha Ekanayake — One-Touch Scan-To-PDF With ScanSnap S1500 on Linux](https://virantha.com/2014/03/17/one-touch-scanning-with-fujitsu-scansnap-s1500-on-linux/) (2014) — the original scanbd + S1500 walkthrough
-- [Kevin Liu — Automatic Scanning on Linux with the ScanSnap S500M](https://kliu.io/post/linux-scansnap-s500m/) (2019) — scanbd setup for a different ScanSnap model
-- [Neil Brown — Scanning to Debian 12 with ix500](https://neilzone.co.uk/2024/01/scanning-to-debian-12-with-a-scansnap-ix500) (2024) — scanbd on Debian with the ix500
-- [J.B. Rainsberger — Use Your ScanSnap Scanner with Linux](https://blog.jbrains.ca/permalink/use-your-scansnap-scanner-with-linux) — general ScanSnap + Linux guidance
+- [Virantha Ekanayake — One-touch scan enabling in Ubuntu Linux for the Fujitsu ScanSnap S1500](https://virantha.com/2014/03/17/one-touch-scanning-with-fujitsu-scansnap-in-linux/) (2014) — the original scanbd + S1500 walkthrough
+- [Kevin Liu — Fully Automatic Scanning with the ScanSnap S500M on Linux](https://kliu.io/post/automatic-scanning-with-scansnap-s500m/) (2019) — scanbd setup for a different ScanSnap model
+- [Neil Brown — Scanning to Debian 12 with a Fujitsi ix500](https://neilzone.co.uk/2024/03/scanning-to-debian-12-with-a-fujitsi-ix500/) (2024) — scanbd on Debian with the ix500
+- [J.B. Rainsberger — Use a Fujitsu ScanSnap Scanner With Linux](https://jb.rainsberger.ca/permalink/use-scansnap-with-linux) — general ScanSnap + Linux guidance
 
 Going paperless at home:
 
@@ -425,6 +437,6 @@ Going paperless at home:
 And the tools this project depends on or relates to:
 
 - [SANE project](http://www.sane-project.org/) — Scanner Access Now Easy, the Linux scanning framework
-- [scanbd](https://github.com/wilhelmbot/scanbd) — the general-purpose scanner button daemon
+- [scanbd](https://gitlab.com/sane-project/frontend/scanbd) — the general-purpose scanner button daemon
 - [sane-backends fujitsu](https://gitlab.com/sane-project/backends/-/tree/master/backend) — the SANE backend that handles Fujitsu scanners (and where I found the USB protocol constants)
 - [s1500d on GitHub](https://github.com/mmacpherson/s1500d) — source code, issues, and contributions welcome

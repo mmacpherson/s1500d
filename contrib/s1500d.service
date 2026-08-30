@@ -6,18 +6,17 @@ After=local-fs.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/s1500d -c /etc/s1500d/config.toml
+User=s1500d
+Group=s1500d
+StateDirectory=s1500d
+StateDirectoryMode=0750
+Environment=SCAN_DIR=/var/lib/s1500d/scans
 Restart=always
 RestartSec=5
 
-# Hardening — safe defaults that don't interfere with USB access
+# Hardening — handlers can write to StateDirectory, but not users' homes.
 NoNewPrivileges=true
 ProtectHome=true
-
-# To run as a dedicated user instead of root, set up the udev rule
-# (contrib/99-scansnap.rules) and uncomment:
-# User=scanner
-# Group=scanner
-# SupplementaryGroups=plugdev
 
 [Install]
 WantedBy=multi-user.target

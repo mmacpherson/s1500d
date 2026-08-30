@@ -23,3 +23,7 @@ Thumbs.db
 # makepkg
 /pkg/
 /src/s1500d-*/
+/dist/
+
+# Local issue database
+.beads/

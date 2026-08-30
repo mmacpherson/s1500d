@@ -10,6 +10,7 @@ makedepends=('cargo' 'libusb')
 depends=('libusb')
 install=s1500d.install
 backup=('etc/s1500d/config.toml')
+options=('!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('af6cd27693f360ee3998f9b1b1c9862914c370cb4ec084f3ad7da955349f44a8')
 
@@ -35,6 +36,9 @@ package() {
     install -Dm0755 target/release/s1500d "$pkgdir/usr/bin/s1500d"
     install -Dm0644 contrib/s1500d.service "$pkgdir/usr/lib/systemd/system/s1500d.service"
     install -Dm0644 contrib/99-scansnap.rules "$pkgdir/usr/lib/udev/rules.d/99-scansnap.rules"
+    if [[ -f contrib/s1500d.sysusers ]]; then
+        install -Dm0644 contrib/s1500d.sysusers "$pkgdir/usr/lib/sysusers.d/s1500d.conf"
+    fi
     install -Dm0644 contrib/config.toml "$pkgdir/etc/s1500d/config.toml"
     install -Dm0755 contrib/handler-example.sh "$pkgdir/usr/share/s1500d/handler-example.sh"
     install -Dm0755 contrib/handler-scan-to-pdf.sh "$pkgdir/usr/share/s1500d/handler-scan-to-pdf.sh"

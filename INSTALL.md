@@ -1,5 +1,10 @@
 # Installation
 
+s1500d supports Linux and the Fujitsu ScanSnap S1500 with USB ID `04c5:11a2`.
+It detects hardware events and calls a script; it does not scan documents by
+itself. Before installing, confirm the scanner model and decide what script
+should receive its events.
+
 ## Arch Linux (AUR)
 
 ```sh
@@ -7,6 +12,38 @@ paru -S s1500d
 ```
 
 This installs the binary, systemd unit, udev rules, and example config/handler.
+The example handler only writes events to the journal; it is safe for evaluating
+the daemon but does not produce scans.
+
+## GitHub release packages
+
+Starting with v0.3.1, tagged releases include x86-64 deb, rpm, Arch
+`.pkg.tar.zst`, and generic tar packages plus SHA-256 checksums. The native
+packages install the binary, systemd unit, udev rule, dedicated service account
+definition, example config, and handlers. They do not enable or start the
+service.
+
+Use the deb on Debian/Ubuntu, the rpm on Fedora, and the `.pkg.tar.zst` with
+`pacman -U` on Arch Linux. Arch users who prefer to build locally can inspect
+the repository's [`PKGBUILD`](PKGBUILD) or use the AUR. The generic tar archive
+is for inspecting or manually installing the same file layout on other Linux
+distributions; it does not run package lifecycle scripts.
+
+After downloading the files for a release, verify and install the one for your
+distribution:
+
+```sh
+sha256sum --check SHA256SUMS
+
+# Debian/Ubuntu
+sudo apt install ./s1500d_*_amd64.deb
+
+# Fedora
+sudo dnf install ./s1500d-*.x86_64.rpm
+
+# Arch Linux
+sudo pacman -U ./s1500d-*-x86_64.pkg.tar.zst
+```
 
 ## From source
 
@@ -26,12 +63,111 @@ dnf install libusb1-devel
 Then either:
 
 ```sh
-# Install via cargo
+# Get the source
+git clone https://github.com/mmacpherson/s1500d.git
+cd s1500d
+
+# Install only the binary in your Cargo bin directory
 cargo install --path .
 
-# Or via make (installs systemd unit, udev rules, config, etc.)
+# Or install the binary plus systemd, udev, config, and handler files
 make release
 sudo make install
+sudo systemd-sysusers s1500d.conf
+sudo udevadm control --reload-rules
+sudo systemctl daemon-reload
 ```
 
 See the [Makefile](Makefile) for configurable `PREFIX`, `DESTDIR`, `SYSCONFDIR`, and other variables.
+
+## Verify the hardware
+
+Open the ADF lid, then confirm the scanner and run the interactive check:
+
+```sh
+lsusb -d 04c5:11a2
+s1500d --doctor
+```
+
+After installing a v0.3.1-or-newer native package, also run the check as the
+same dedicated account used by the service:
+
+```sh
+sudo -u s1500d s1500d --doctor
+```
+
+That command is the meaningful permission check on a headless machine. The
+udev `uaccess` tag may separately allow the active desktop user to run the
+unprivileged command.
+
+If `lsusb` sees the scanner but `--doctor` cannot open it, reload the installed
+udev rule, close and reopen the lid, and try again:
+
+```sh
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Stop scanbd or any other process that may own the scanner while testing. Running
+`s1500d` with no arguments is a second, non-interactive check: it logs events
+but does not call a handler.
+
+## Configure what happens
+
+There are two ways to run a handler:
+
+```sh
+# Raw events such as button-down and paper-in
+s1500d /path/to/handler.sh
+
+# Button gestures mapped to profiles in a TOML file
+s1500d -c /path/to/config.toml
+```
+
+Start with [`contrib/config.toml`](contrib/config.toml) and
+[`contrib/handler-example.sh`](contrib/handler-example.sh). The example handler
+only logs. [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh) is
+a starting point for a real scan workflow and additionally requires SANE and
+`img2pdf`:
+
+```sh
+# Arch Linux
+pacman -S sane img2pdf
+
+# Debian/Ubuntu
+apt install sane-utils img2pdf
+
+# Fedora
+dnf install sane-backends img2pdf
+```
+
+Run and debug your chosen handler in the foreground before enabling it as a
+service. The packaged service runs as the dedicated `s1500d` user, sets
+`SCAN_DIR=/var/lib/s1500d/scans`, and uses systemd's `StateDirectory` support to
+make `/var/lib/s1500d` writable by that account. It also sets `ProtectHome=true`,
+so it cannot write to a user's `$HOME/Scans` without a systemd override.
+
+## Enable the service
+
+After `/etc/s1500d/config.toml` points to a tested handler:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now s1500d
+systemctl status s1500d
+journalctl -u s1500d -f
+```
+
+Review the unit, handler, output directory, and USB permissions for your system
+before treating it as a production setup. In particular, confirm how the user
+or process that consumes completed scans will read `/var/lib/s1500d/scans`. One
+option is to add that user to the `s1500d` group (replace `USERNAME`, then log in
+again):
+
+```sh
+sudo usermod --append --groups s1500d USERNAME
+```
+
+Package construction and service-file checks can be completed without a
+scanner. USB permission, physical events, the USB-to-SANE handoff, scan output,
+and disconnect recovery must be tested on the real device.
