@@ -99,18 +99,37 @@ s1500d -c CONFIG.toml         Gesture detection + profile dispatch
 s1500d --doctor               Interactive hardware verification
 ```
 
-The handler script receives the event name as `$1`:
+### Supported actions and gestures
 
-| Event | Meaning |
-|-------|---------|
-| `device-arrived` | Scanner lid opened (USB device appeared) |
-| `device-left` | Scanner lid closed (USB device removed) |
-| `paper-in` | Paper inserted into feeder |
-| `paper-out` | Paper removed from feeder |
-| `button-down` | Scan button pressed |
-| `button-up` | Scan button released |
+This is the complete set of physical scanner actions s1500d recognizes:
 
-With `-c`, button events are replaced by gesture dispatch — the handler receives `scan <profile>` instead of raw `button-down`/`button-up` events. See [Configuration](#configuration) below.
+| What you do | Raw handler mode | Config mode |
+|-------------|------------------|-------------|
+| Open the ADF lid | `device-arrived` | `device-arrived` |
+| Close the ADF lid | `device-left` | `device-left` |
+| Insert paper | `paper-in` | `paper-in` |
+| Remove paper | `paper-out` | `paper-out` |
+| Press the scan button | `button-down` | Starts or continues a multi-press gesture |
+| Release the scan button | `button-up` | Completes one press and starts the gesture timeout |
+
+In raw mode, the handler receives the event name as `$1`. In config mode,
+button-down and button-up are not sent to the handler. Instead, one or more
+complete presses followed by the timeout produce `scan <profile>` when that
+press count appears in `[profiles]`. Any positive press count can be mapped;
+unmapped counts are logged and ignored.
+
+The complete button-gesture behavior in config mode is:
+
+| What you do | What s1500d does |
+|-------------|-----------------|
+| Single press | Dispatches the profile mapped to `1` after the timeout |
+| Double press | Dispatches the profile mapped to `2` after the timeout |
+| Triple press | Dispatches the profile mapped to `3` after the timeout |
+| Any higher configured number of presses | Dispatches the profile mapped to that number |
+
+For a multi-press gesture, each next press must begin before the timeout after
+the previous release expires. How long you hold the button does not affect the
+gesture.
 
 Set `log_level = "debug"` in your config file for verbose output. The `RUST_LOG` environment variable overrides config if set.
 
@@ -128,7 +147,14 @@ log_level = "info"
 2 = "legal"
 ```
 
-When you press the scan button once, the daemon waits `gesture_timeout_ms` for additional presses. If none come, it calls `handler.sh scan standard`. Two presses within the window calls `handler.sh scan legal`. Unmapped press counts are logged and ignored.
+When you press the scan button once, the daemon waits `gesture_timeout_ms` for additional presses. If none come, it calls `handler.sh scan standard`. Two presses within the window call `handler.sh scan legal`. Unmapped press counts are logged and ignored.
+
+Profile names such as `standard` and `legal` are arbitrary labels, not built-in
+scan presets. Your handler decides what each one means: it can vary simplex or
+duplex scanning, color mode, resolution, page size, output format or
+destination, post-processing, OCR, upload, or anything else available to the
+commands it runs. A handler is not limited to `scanimage`; it can run any
+command you choose.
 
 `log_level` accepts standard values: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this setting if set.
 

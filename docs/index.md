@@ -162,16 +162,39 @@ The simplest way to try s1500d is to just run it with no arguments. Open the sca
 s1500d
 ```
 
-You'll see events logged to stderr as you interact with the scanner:
+You'll see events logged to stderr as you interact with the scanner.
 
-| Event | Meaning |
-|-------|---------|
-| `device-arrived` | Scanner lid opened (USB device appeared) |
-| `device-left` | Scanner lid closed (USB device removed) |
-| `paper-in` | Paper inserted into feeder |
-| `paper-out` | Paper removed from feeder |
-| `button-down` | Scan button pressed |
-| `button-up` | Scan button released |
+### supported actions and gestures
+
+This is the complete set of physical scanner actions s1500d recognizes:
+
+| What you do | Raw handler mode | Config mode |
+|-------------|------------------|-------------|
+| Open the ADF lid | `device-arrived` | `device-arrived` |
+| Close the ADF lid | `device-left` | `device-left` |
+| Insert paper | `paper-in` | `paper-in` |
+| Remove paper | `paper-out` | `paper-out` |
+| Press the scan button | `button-down` | Starts or continues a multi-press gesture |
+| Release the scan button | `button-up` | Completes one press and starts the gesture timeout |
+
+In raw mode, the handler receives the event name as `$1`. In config mode,
+button-down and button-up are not sent to the handler. Instead, one or more
+complete presses followed by the timeout produce `scan <profile>` when that
+press count appears in `[profiles]`. Any positive press count can be mapped;
+unmapped counts are logged and ignored.
+
+The complete button-gesture behavior in config mode is:
+
+| What you do | What s1500d does |
+|-------------|-----------------|
+| Single press | Dispatches the profile mapped to `1` after the timeout |
+| Double press | Dispatches the profile mapped to `2` after the timeout |
+| Triple press | Dispatches the profile mapped to `3` after the timeout |
+| Any higher configured number of presses | Dispatches the profile mapped to that number |
+
+For a multi-press gesture, each next press must begin before the timeout after
+the previous release expires. How long you hold the button does not affect the
+gesture.
 
 To actually *do* something with these events, pass a handler script:
 
@@ -328,16 +351,26 @@ In config mode, your handler receives these events as `$1`:
 ### gesture detection
 
 Instead of passing raw `button-down`/`button-up` events, config mode counts
-rapid button presses within the `gesture_timeout_ms` window and maps the count
-to a named profile via the `[profiles]` table.
+complete button presses and maps the count to a named profile via the
+`[profiles]` table. Each release starts the `gesture_timeout_ms` window; another
+press inside it increments the count, while letting it expire dispatches the
+gesture.
 
 Press the button once, wait 600ms, and your handler gets called with
 `scan standard`. Press twice quickly and it gets `scan legal`. Three times for
 `scan photo`. Unmapped press counts are logged and ignored.
 
-The config above maps three presses, but your handler can support as many
-profiles as you like — you just map the ones you use most often to button
-gestures. Here are some natural options for reference:
+The config above maps three press counts, but s1500d does not hard-code a finite
+set of single-, double-, or triple-press gestures. Any positive press count can
+be mapped, and your handler can support as many profiles as you find practical.
+
+Profile names such as `standard`, `legal`, and `photo` are arbitrary labels,
+not built-in scan presets. Your handler decides what they mean. With
+`scanimage`, a profile might select simplex or duplex scanning, color mode,
+resolution, page dimensions, or output format; the handler can also choose a
+destination, perform OCR or other post-processing, upload the result, send a
+notification, or run something unrelated to scanning. Here are some natural
+scan settings for reference:
 
 ```bash
 case "$PROFILE" in
