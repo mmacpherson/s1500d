@@ -163,8 +163,11 @@ See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contri
 With `SCAN_DEVICE` unset, the PDF handler runs `scanimage -L` and selects the
 scanner only if exactly one ScanSnap S1500 is listed. Otherwise it reports the
 list and asks for an exact `SCAN_DEVICE`; an explicit value skips discovery.
-Discovery runs on every scan and can take several seconds while SANE probes
-enabled backends. Set `SCAN_DEVICE` to the logged name for faster button response.
+Discovery runs on every scan. With `SANE_CONFIG_DIR` unset and a readable
+`fujitsu.conf`, it first tries a temporary Fujitsu-only configuration. Custom
+SANE configurations, missing configuration, or failed/empty fast lookups use
+full discovery, which can take several seconds. Set `SCAN_DEVICE` to the logged
+name to skip discovery entirely.
 It keeps failed attempts in private `$SCAN_DIR/.s1500d-*`
 directories and reports their recovery paths. Completed PDFs are mode 0640,
 owned by the invoking account, and never overwrite an existing filename.

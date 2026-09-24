@@ -163,11 +163,24 @@ SCAN_DEVICE='fujitsu:ScanSnap S1500:YOUR_SERIAL' SCAN_DIR="$HOME/Scans" \
     ./contrib/handler-scan-to-pdf.sh scan standard
 ```
 
-Discovery runs before every scan and uses the existing SANE configuration,
-including `SANE_CONFIG_DIR` if set. Probing enabled backends can add several
-seconds before acquisition starts. For regular button-driven scanning, set
+Discovery runs before every scan. If `SANE_CONFIG_DIR` is unset, the handler
+looks for readable `fujitsu.conf` in the current directory, `/etc/sane.d`, then
+`/usr/local/etc/sane.d`. It copies that file into a private temporary directory
+with only the Fujitsu backend enabled, used solely for discovery and then
+removed. Acquisition retains the original SANE configuration.
+
+An explicitly set `SANE_CONFIG_DIR` (including an empty value or search list)
+bypasses this optimization and is passed through unchanged. If configuration
+cannot be found/copied or the fast lookup fails or returns no devices, the
+handler falls back to full discovery. A lookup returning only diagnostics or
+other scanner models also falls back; it must list an S1500 to be usable.
+Probing all enabled backends can add
+several seconds before acquisition starts. For regular button-driven scanning, set
 `SCAN_DEVICE` to the exact name logged by a successful detection to avoid that
 delay. Detection does not save the name between invocations.
+An off or unplugged scanner can produce an empty fast lookup, so such attempts
+still pay the full discovery delay before failing. Pinning `SCAN_DEVICE` also
+skips discovery in this case.
 
 For service use, leave `SCAN_DEVICE` unset for auto-detection, or set it in the handler or in a systemd
 drop-in with `[Service]` and

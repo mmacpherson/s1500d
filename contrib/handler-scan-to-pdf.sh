@@ -14,6 +14,8 @@
 SCAN_DIR="${SCAN_DIR:-$HOME/Scans}"
 EVENT="${1:-}"
 PROFILE="${2:-scan}"
+# SANE quotes exact backend names with a backtick and an apostrophe.
+device_pattern="^device \`(fujitsu:ScanSnap S1500:[^']+)' is "
 
 log() {
     printf '%s\n' "$*" >&2
@@ -33,6 +35,49 @@ finish() {
     return "$status"
 }
 
+# Subshell keeps temporary configuration and cleanup separate from acquisition.
+discover_devices() (
+    # SANE_CONFIG_DIR has search-list, empty and trailing-colon semantics.
+    # Delegate custom configurations unchanged instead of guessing their defaults.
+    if [ "${SANE_CONFIG_DIR+x}" != x ]; then
+        fujitsu_config=""
+        # SANE searches '.' first; under the service this is normally '/'.
+        for directory in . /etc/sane.d /usr/local/etc/sane.d; do
+            if [ -f "$directory/fujitsu.conf" ] && [ -r "$directory/fujitsu.conf" ]; then
+                fujitsu_config="$directory/fujitsu.conf"
+                break
+            fi
+        done
+        if [ -n "$fujitsu_config" ]; then
+            discovery_dir=$(mktemp -d "${TMPDIR:-/tmp}/s1500d-sane-XXXXXXXXXX") || discovery_dir=""
+            if [ -n "$discovery_dir" ]; then
+                trap 'rm -r -- "$discovery_dir"' EXIT
+                trap 'exit 129' HUP
+                trap 'exit 130' INT
+                trap 'exit 143' TERM
+                # A colon would make this path a SANE search list, not one directory.
+                if [[ "$discovery_dir" != *:* ]] &&
+                    cp -- "$fujitsu_config" "$discovery_dir/fujitsu.conf" &&
+                    printf 'fujitsu\n' > "$discovery_dir/dll.conf" &&
+                    mkdir -- "$discovery_dir/dll.d"; then
+                    if fast_list=$(SANE_CONFIG_DIR="$discovery_dir" LC_ALL=C scanimage -L); then
+                        # No-device diagnostics are stdout with exit 0 in SANE.
+                        # Only actual S1500 entries make this result usable.
+                        while IFS= read -r line; do
+                            if [[ "$line" =~ $device_pattern ]]; then
+                                printf '%s\n' "$fast_list"
+                                exit 0
+                            fi
+                        done <<< "$fast_list"
+                    fi
+                fi
+            fi
+        fi
+    fi
+    log "Using full SANE discovery (set SCAN_DEVICE to skip detection)"
+    LC_ALL=C scanimage -L
+)
+
 case "$EVENT" in
     scan)
         # Newly created directories are group-readable; raw pages stay private.
@@ -41,10 +86,9 @@ case "$EVENT" in
             command -v "$tool" >/dev/null || fail "Required command missing: $tool"
         done
         if [ "${SCAN_DEVICE+x}" != x ]; then
-            if DEVICE_LIST=$(LC_ALL=C scanimage -L); then
+            if DEVICE_LIST=$(discover_devices); then
                 # SANE lists exact names between a backtick and an apostrophe.
                 # Match the backend model exactly, excluding S1500M and others.
-                device_pattern="^device \`(fujitsu:ScanSnap S1500:[^']+)' is "
                 DEVICES=()
                 while IFS= read -r line; do
                     if [[ "$line" =~ $device_pattern ]]; then

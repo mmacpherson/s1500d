@@ -248,10 +248,19 @@ ScanSnap S1500 and logs its exact name. No matches, multiple matches or a failed
 lookup stop the attempt with the device list and instructions. Other scanner
 models do not count as matches.
 
-Discovery runs on every scan using the existing SANE configuration. It can add
-several seconds while enabled backends are probed. For regular use, set
+Discovery runs on every scan. With `SANE_CONFIG_DIR` unset, it looks for a
+readable `fujitsu.conf` in the current directory, `/etc/sane.d`, then
+`/usr/local/etc/sane.d`, and tries a private temporary Fujitsu-only configuration.
+This configuration is removed afterwards and never changes acquisition settings.
+Explicit `SANE_CONFIG_DIR` values, including empty values and search lists, use
+full discovery unchanged. Missing configuration, preparation errors, failed lookups, or
+fast lookups without an S1500 device entry also fall back to full discovery.
+Diagnostic text alone does not count as a device. That can add several
+seconds while enabled backends are probed. For regular use, set
 `SCAN_DEVICE` to the exact name in the detection log to skip that delay;
 the handler does not persist its selection between invocations.
+An off or unplugged scanner can leave the fast lookup empty, triggering the
+slower full lookup before failure. Pinning `SCAN_DEVICE` skips that lookup too.
 
 For a single-scanner setup:
 

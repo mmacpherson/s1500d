@@ -20,14 +20,28 @@ class PdfHandlerTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin",
                         SCAN_DIR=str(self.output), SCAN_DEVICE="exact device:123",
                         TRACE=str(self.root / "trace"))
+        self.env.pop("SANE_CONFIG_DIR", None)
+        self.env["TMPDIR"] = str(self.root)
         self.stub("logger", 'printf "%s\\n" "$*" >> "$TRACE"')
         self.stub("date", 'echo 20260924-120000')
         self.stub("scanimage", '''
 printf '%s\\n' "$@" >> "$TRACE"
 if [ "${1:-}" = -L ]; then
+    printf 'discovery_config=%s\\n' "${SANE_CONFIG_DIR-unset}" >> "$TRACE"
+    if [ -f "${SANE_CONFIG_DIR:-}/dll.conf" ]; then
+        [ "$(< "$SANE_CONFIG_DIR/dll.conf")" = fujitsu ] || exit 80
+        [ -d "$SANE_CONFIG_DIR/dll.d" ] || exit 81
+        [ "$(< "$SANE_CONFIG_DIR/fujitsu.conf")" = 'usb 0x04c5 0x11a2' ] || exit 82
+        [ "${FAST_FAIL:-}" = yes ] && exit 9
+        if [ "${FAST_EMPTY:-}" = yes ]; then
+            printf '\\nNo scanners were identified. If you were expecting something different,\\ncheck that the scanner is plugged in, turned on and detected.\\n'
+            exit 0
+        fi
+    fi
     printf '%s\\n' "${DEVICE_LIST:-}"
     exit "${DISCOVERY_STATUS:-0}"
 fi
+printf 'acquisition_config=%s\\n' "${SANE_CONFIG_DIR-unset}" >> "$TRACE"
 for arg in "$@"; do
     case "$arg" in --batch=*) batch=${arg#--batch=};; esac
 done
@@ -180,10 +194,10 @@ exit 0
         self.assertEqual(pdf.read_text(), "complete PDF")
         self.assertEqual(len(list(self.output.glob(".s1500d-*/page_*.tiff"))), 2)
 
-    def discover(self, listing, status=0):
-        self.env.pop("SCAN_DEVICE")
+    def discover(self, listing, status=0, profile="standard"):
+        self.env.pop("SCAN_DEVICE", None)
         self.env.update(DEVICE_LIST=listing, DISCOVERY_STATUS=str(status))
-        return self.run_handler()
+        return self.run_handler(profile=profile)
 
     def test_detect_single_s1500(self):
         listing = "device `fujitsu:ScanSnap S1500:000000' is a FUJITSU ScanSnap S1500 scanner"
@@ -238,6 +252,51 @@ exit 0
         result = self.discover("")
         self.assert_failure(result)
         self.assertIn("(no devices listed)", result.stderr)
+
+    def fast_config(self):
+        (self.root / "fujitsu.conf").write_text("usb 0x04c5 0x11a2\n")
+        return "device `fujitsu:ScanSnap S1500:123' is a FUJITSU ScanSnap S1500 scanner"
+
+    def test_fujitsu_only_discovery_is_private_and_temporary(self):
+        result = self.discover(self.fast_config())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace = (self.root / "trace").read_text()
+        self.assertIn("discovery_config=" + str(self.root / "s1500d-sane-"), trace)
+        self.assertIn("acquisition_config=unset", trace)
+        self.assertFalse(list(self.root.glob("s1500d-sane-*")))
+
+    def test_explicit_sane_config_semantics_are_unchanged(self):
+        listing = self.fast_config()
+        for index, value in enumerate(("", str(self.root / "custom"), str(self.root / "one") + ":" + str(self.root / "two") + ":")):
+            with self.subTest(value=value):
+                self.env["SANE_CONFIG_DIR"] = value
+                self.env.pop("SCAN_DEVICE", None)
+                result = self.discover(listing, profile=f"scan{index}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("discovery_config=" + value + "\n", (self.root / "trace").read_text())
+                self.assertIn("acquisition_config=" + value + "\n", (self.root / "trace").read_text())
+                self.assertNotIn("Fujitsu-only", result.stderr)
+        self.assertFalse(list(self.root.glob("s1500d-sane-*")))
+
+    def test_failed_fast_lookup_falls_back(self):
+        self.env["FAST_FAIL"] = "yes"
+        result = self.discover(self.fast_config())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "trace").read_text().splitlines().count("-L"), 2)
+        self.assertFalse(list(self.root.glob("s1500d-sane-*")))
+
+    def test_empty_fast_lookup_falls_back(self):
+        self.env["FAST_EMPTY"] = "yes"
+        result = self.discover(self.fast_config())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "trace").read_text().splitlines().count("-L"), 2)
+
+    def test_failed_config_copy_falls_back(self):
+        self.stub("cp", "exit 1")
+        result = self.discover(self.fast_config())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("discovery_config=unset", (self.root / "trace").read_text())
+        self.assertFalse(list(self.root.glob("s1500d-sane-*")))
 
     def test_invalid_profile(self):
         self.assert_failure(self.run_handler(profile="../escape"))
