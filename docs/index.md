@@ -237,6 +237,14 @@ One important detail: s1500d releases the USB device before calling your
 handler. This means `scanimage` and other SANE tools can claim the scanner
 cleanly — no fighting over the device handle.
 
+Handlers run one at a time, synchronously, with the USB device released —
+including `device-arrived`. Events observed in the same poll are delivered in
+order (paper before button). s1500d cannot see the scanner while a handler
+runs: afterwards, a changed button state is delivered as one press or
+release (timed when it was seen), paper changes are absorbed (a scan usually
+consumes the paper), and a press and release that both happen during the
+handler are not seen.
+
 ## scan to PDF
 
 The

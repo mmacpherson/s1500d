@@ -23,7 +23,7 @@ fn wait_for_state(
     print!("      Polling");
     let _ = io::stdout().flush();
     loop {
-        if let Some(state) = poll_status(handle) {
+        if let Ok(state) = poll_status(handle) {
             if predicate(&state) {
                 return Some(state);
             }
@@ -77,13 +77,13 @@ pub fn doctor() {
     print!("[2/6] Hardware status ......... ");
     let _ = io::stdout().flush();
     let baseline = match poll_status(&handle) {
-        Some(s) => {
+        Ok(s) => {
             println!("ok  (paper={}, button={})", s.paper, s.button);
             s
         }
-        None => {
+        Err(e) => {
             println!("FAIL");
-            println!("\n      GET_HW_STATUS returned no data. USB communication error.");
+            println!("\n      GET_HW_STATUS failed: {e}");
             std::process::exit(1);
         }
     };

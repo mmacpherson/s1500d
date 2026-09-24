@@ -42,7 +42,16 @@ bytes 19+:  SCSI CDB (up to 12 bytes)
 The protocol is **3-phase**:
 1. Write 31-byte command → EP_OUT (0x02)
 2. Read data response → EP_IN (0x81)
-3. Read status envelope → EP_IN (13 bytes starting with 0x53 = success)
+3. Read status envelope → EP_IN (13 bytes; byte 0 is the `0x53` envelope
+   marker, byte 9 the SCSI status: `0` good, `8` busy, other values an error)
+
+A command the device rejects can answer the data phase with the status
+envelope itself. s1500d treats that, a short write, a data phase other than
+12 bytes, or any status other than good as a failed poll.
+
+The status envelope layout (`USB_STATUS_LEN = 0x0D`, `USB_STATUS_OFFSET = 0x09`)
+is taken from the SANE 1.4.0 `fujitsu` backend. The 12-byte data responses below
+were captured from an S1500; status-envelope bytes have not yet been captured.
 
 These constants were confirmed by cross-referencing the SANE `fujitsu` backend:
 - `USB_COMMAND_CODE = 0x43`, `USB_COMMAND_LEN = 0x1F (31)`, `USB_COMMAND_OFFSET = 0x13 (19)`
