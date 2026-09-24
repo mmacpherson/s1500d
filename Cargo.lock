@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "s1500d"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "env_logger",
  "libc",
