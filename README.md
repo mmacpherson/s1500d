@@ -210,7 +210,7 @@ The tradeoff: s1500d only works with the ScanSnap S1500 (and potentially other S
 The repo includes systemd and udev files in [`contrib/`](contrib/):
 
 - **`s1500d.service`** — systemd unit with security hardening
-- **`99-scansnap.rules`** — udev rule for non-root USB access
+- **`70-s1500d.rules`** — udev rule for non-root USB access
 - **`config.toml`** — example configuration
 - **`handler-example.sh`** — example handler script
 - **`handler-scan-to-pdf.sh`** — scan-to-PDF handler using `scanimage` + `img2pdf`

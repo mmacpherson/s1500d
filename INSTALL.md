@@ -99,6 +99,11 @@ That command is the meaningful permission check on a headless machine. The
 udev `uaccess` tag may separately allow the active desktop user to run the
 unprivileged command.
 
+Earlier versions installed the rule as `99-scansnap.rules`, too late in udev's
+order for the desktop `uaccess` grant to apply. Packages and `make install`
+remove that file; if you copied it to `/etc/udev/rules.d/` by hand, delete it
+there and install `contrib/70-s1500d.rules` instead.
+
 If `lsusb` sees the scanner but `--doctor` cannot open it, reload the installed
 udev rule, close and reopen the lid, and try again:
 
