@@ -146,17 +146,34 @@ service. The packaged service runs as the dedicated `s1500d` user, sets
 make `/var/lib/s1500d` writable by that account. It also sets `ProtectHome=true`,
 so it cannot write to a user's `$HOME/Scans` without a systemd override.
 
-For the PDF handler, run `scanimage -L` and set `SCAN_DEVICE` to the exact
-reported name, including the serial number (not a wildcard). For example:
+The PDF handler automatically selects exactly one ScanSnap S1500 from
+`scanimage -L` when `SCAN_DEVICE` is unset. With no matching device, multiple
+matches, or failed discovery, it stops before scanning and reports the list
+and setup instructions. For a single-scanner setup:
+
+```sh
+SCAN_DIR="$HOME/Scans" ./contrib/handler-scan-to-pdf.sh scan standard
+```
+
+To choose explicitly, set `SCAN_DEVICE` to the exact reported name, including
+the serial number (not a wildcard). This skips discovery entirely:
 
 ```sh
 SCAN_DEVICE='fujitsu:ScanSnap S1500:YOUR_SERIAL' SCAN_DIR="$HOME/Scans" \
     ./contrib/handler-scan-to-pdf.sh scan standard
 ```
 
-For service use, set the same `SCAN_DEVICE` in the handler or in a systemd
+Discovery runs before every scan and uses the existing SANE configuration,
+including `SANE_CONFIG_DIR` if set. Probing enabled backends can add several
+seconds before acquisition starts. For regular button-driven scanning, set
+`SCAN_DEVICE` to the exact name logged by a successful detection to avoid that
+delay. Detection does not save the name between invocations.
+
+For service use, leave `SCAN_DEVICE` unset for auto-detection, or set it in the handler or in a systemd
 drop-in with `[Service]` and
 `Environment="SCAN_DEVICE=fujitsu:ScanSnap S1500:YOUR_SERIAL"`.
+An explicitly empty value is an error; use `unset SCAN_DEVICE` to restore
+auto-detection. Discovery runs as the handler's account and needs USB access.
 The PDF handler creates scan directories with mode 0750 and completed PDFs
 with mode 0640, owned by the invoking account/group. It preserves existing
 directory permissions. Under the packaged service these files belong to

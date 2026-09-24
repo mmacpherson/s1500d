@@ -24,6 +24,10 @@ class PdfHandlerTests(unittest.TestCase):
         self.stub("date", 'echo 20260924-120000')
         self.stub("scanimage", '''
 printf '%s\\n' "$@" >> "$TRACE"
+if [ "${1:-}" = -L ]; then
+    printf '%s\\n' "${DEVICE_LIST:-}"
+    exit "${DISCOVERY_STATUS:-0}"
+fi
 for arg in "$@"; do
     case "$arg" in --batch=*) batch=${arg#--batch=};; esac
 done
@@ -176,9 +180,64 @@ exit 0
         self.assertEqual(pdf.read_text(), "complete PDF")
         self.assertEqual(len(list(self.output.glob(".s1500d-*/page_*.tiff"))), 2)
 
-    def test_missing_device(self):
+    def discover(self, listing, status=0):
         self.env.pop("SCAN_DEVICE")
-        self.assert_failure(self.run_handler())
+        self.env.update(DEVICE_LIST=listing, DISCOVERY_STATUS=str(status))
+        return self.run_handler()
+
+    def test_detect_single_s1500(self):
+        listing = "device `fujitsu:ScanSnap S1500:000000' is a FUJITSU ScanSnap S1500 scanner"
+        result = self.discover(listing)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Auto-detected scanner: fujitsu:ScanSnap S1500:000000", result.stderr)
+        self.assertIn("--device-name=fujitsu:ScanSnap S1500:000000", (self.root / "trace").read_text())
+
+    def test_no_matching_scanner(self):
+        listing = "device `fujitsu:ScanSnap S1500M:123' is a FUJITSU ScanSnap S1500M scanner"
+        result = self.discover(listing)
+        self.assert_failure(result)
+        self.assertIn(listing, result.stderr)
+        self.assertIn("SCAN_DEVICE", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_multiple_scanners(self):
+        listing = "\n".join(f"device `fujitsu:ScanSnap S1500:{serial}' is a FUJITSU ScanSnap S1500 scanner" for serial in (123, 456))
+        result = self.discover(listing)
+        self.assert_failure(result)
+        self.assertIn(listing, result.stderr)
+        self.assertIn("SCAN_DEVICE", result.stderr)
+
+    def test_failed_discovery_does_not_use_partial_list(self):
+        listing = "device `fujitsu:ScanSnap S1500:123' is a FUJITSU ScanSnap S1500 scanner"
+        result = self.discover(listing, status=9)
+        self.assert_failure(result)
+        self.assertIn("exit 9", result.stderr)
+        self.assertIn(listing, result.stderr)
+        self.assertNotIn("--batch=", (self.root / "trace").read_text())
+
+    def test_explicit_device_skips_discovery(self):
+        self.env["DISCOVERY_STATUS"] = "9"
+        result = self.run_handler()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("-L", (self.root / "trace").read_text().splitlines())
+
+    def test_explicit_empty_device_fails_without_lookup(self):
+        self.env["SCAN_DEVICE"] = ""
+        result = self.run_handler()
+        self.assert_failure(result)
+        self.assertIn("SCAN_DEVICE is empty", result.stderr)
+        self.assertFalse((self.root / "trace").exists() and "-L" in (self.root / "trace").read_text().splitlines())
+
+    def test_other_devices_do_not_make_single_s1500_ambiguous(self):
+        listing = "device `other:123' is another scanner\ndevice `fujitsu:ScanSnap S1500:456' is a FUJITSU ScanSnap S1500 scanner"
+        result = self.discover(listing)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--device-name=fujitsu:ScanSnap S1500:456", (self.root / "trace").read_text())
+
+    def test_empty_discovery_list(self):
+        result = self.discover("")
+        self.assert_failure(result)
+        self.assertIn("(no devices listed)", result.stderr)
 
     def test_invalid_profile(self):
         self.assert_failure(self.run_handler(profile="../escape"))

@@ -160,8 +160,12 @@ command you choose.
 
 See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contrib/handler-example.sh`](contrib/handler-example.sh) for a handler template. For a practical scan-to-PDF workflow, see [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh).
 
-The PDF handler requires `SCAN_DEVICE` set to an exact device name from
-`scanimage -L`. It keeps failed attempts in private `$SCAN_DIR/.s1500d-*`
+With `SCAN_DEVICE` unset, the PDF handler runs `scanimage -L` and selects the
+scanner only if exactly one ScanSnap S1500 is listed. Otherwise it reports the
+list and asks for an exact `SCAN_DEVICE`; an explicit value skips discovery.
+Discovery runs on every scan and can take several seconds while SANE probes
+enabled backends. Set `SCAN_DEVICE` to the logged name for faster button response.
+It keeps failed attempts in private `$SCAN_DIR/.s1500d-*`
 directories and reports their recovery paths. Completed PDFs are mode 0640,
 owned by the invoking account, and never overwrite an existing filename.
 See [installation and access setup](INSTALL.md#configure-what-happens).

@@ -243,8 +243,24 @@ The
 [contrib/handler-scan-to-pdf.sh](https://github.com/mmacpherson/s1500d/blob/main/contrib/handler-scan-to-pdf.sh)
 script is a practical handler that scans all pages in the ADF to a timestamped
 PDF using `scanimage` and `img2pdf`. Use the maintained script linked above.
-Set `SCAN_DEVICE` to the exact device name from `scanimage -L` (including its
-serial number); a literal `*` is not a device selector.
+With `SCAN_DEVICE` unset, the handler runs `scanimage -L`, selects exactly one
+ScanSnap S1500 and logs its exact name. No matches, multiple matches or a failed
+lookup stop the attempt with the device list and instructions. Other scanner
+models do not count as matches.
+
+Discovery runs on every scan using the existing SANE configuration. It can add
+several seconds while enabled backends are probed. For regular use, set
+`SCAN_DEVICE` to the exact name in the detection log to skip that delay;
+the handler does not persist its selection between invocations.
+
+For a single-scanner setup:
+
+```sh
+SCAN_DIR="$HOME/Scans" ./contrib/handler-scan-to-pdf.sh scan standard
+```
+
+An explicit `SCAN_DEVICE` skips lookup. Use the exact name (including serial
+number); a literal `*` is not a device selector. For example:
 
 ```sh
 scanimage -L
@@ -275,8 +291,10 @@ completed PDFs are 0640, and recovery directories are private (0700).
 Existing scan-directory permissions are not changed. Under the packaged service,
 the owner/group is `s1500d` and `SCAN_DIR=/var/lib/s1500d/scans`; readers need
 appropriate group membership and directory access. Recovery requires the service
-account or an administrator. Set `SCAN_DEVICE` in the handler or a systemd
-environment override, and verify foreground scanning and access before enabling
+account or an administrator. Leave `SCAN_DEVICE` unset for auto-detection, or
+set it in the handler or a systemd environment override. An explicitly empty
+value is an error; `unset SCAN_DEVICE` restores auto-detection. Verify foreground
+scanning and access before enabling
 the service. This example requires a filesystem supporting hard links for atomic
 publication; publication failure keeps the recovery files.
 

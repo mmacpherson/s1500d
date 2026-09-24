@@ -7,7 +7,7 @@
 #   Fedora: dnf install sane-backends img2pdf
 #
 # Scans all pages in the ADF to a timestamped PDF.
-# Set SCAN_DEVICE to the exact name reported by scanimage -L.
+# Auto-detects one S1500; set SCAN_DEVICE to an exact scanimage -L name to override.
 # Profile name (from config.toml) is used as a filename prefix.
 # Failed attempts with files remain in SCAN_DIR/.s1500d-* for manual recovery.
 
@@ -40,7 +40,30 @@ case "$EVENT" in
         for tool in scanimage img2pdf mkdir mktemp date chmod ln rm rmdir; do
             command -v "$tool" >/dev/null || fail "Required command missing: $tool"
         done
-        [ -n "${SCAN_DEVICE:-}" ] || fail "Set SCAN_DEVICE to an exact scanimage -L device name"
+        if [ "${SCAN_DEVICE+x}" != x ]; then
+            if DEVICE_LIST=$(LC_ALL=C scanimage -L); then
+                # SANE lists exact names between a backtick and an apostrophe.
+                # Match the backend model exactly, excluding S1500M and others.
+                device_pattern="^device \`(fujitsu:ScanSnap S1500:[^']+)' is "
+                DEVICES=()
+                while IFS= read -r line; do
+                    if [[ "$line" =~ $device_pattern ]]; then
+                        DEVICES+=("${BASH_REMATCH[1]}")
+                    fi
+                done <<< "$DEVICE_LIST"
+                if [ "${#DEVICES[@]}" -ne 1 ]; then
+                    log "scanimage -L returned: ${DEVICE_LIST:-(no devices listed)}"
+                    fail "Found ${#DEVICES[@]} ScanSnap S1500 devices; set SCAN_DEVICE to an exact name from scanimage -L"
+                fi
+                SCAN_DEVICE="${DEVICES[0]}"
+                log "Auto-detected scanner: $SCAN_DEVICE (set SCAN_DEVICE to this exact name to skip detection)"
+            else
+                discovery_status=$?
+                log "scanimage -L returned: ${DEVICE_LIST:-(no devices listed)}"
+                fail "Scanner discovery failed (exit $discovery_status); set SCAN_DEVICE to an exact name from scanimage -L"
+            fi
+        fi
+        [ -n "$SCAN_DEVICE" ] || fail "SCAN_DEVICE is empty; unset it for auto-detection or set an exact scanimage -L name"
         case "$PROFILE" in
             *[!a-zA-Z0-9_-]*) fail "Profile must contain only letters, digits, underscores or hyphens" ;;
         esac
