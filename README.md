@@ -97,6 +97,7 @@ s1500d                        Monitor and log events (no handler)
 s1500d HANDLER                Run HANDLER on each event
 s1500d -c CONFIG.toml         Gesture detection + profile dispatch
 s1500d --doctor               Interactive hardware verification
+s1500d --check-config FILE    Validate a config and its handler (no USB)
 ```
 
 ### Supported actions and gestures
@@ -164,7 +165,13 @@ destination, post-processing, OCR, upload, or anything else available to the
 commands it runs. A handler is not limited to `scanimage`; it can run any
 command you choose.
 
-`log_level` accepts standard values: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this setting if set.
+`log_level` accepts standard values: `off`, `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this setting if set.
+
+s1500d refuses to start with a config it cannot use: an unknown key, a
+`gesture_timeout_ms` of 0, an unknown `log_level`, a press count of
+0, an empty profile name, or a handler that is missing or not executable.
+`s1500d --check-config FILE` runs the same checks without touching the scanner.
+A `gesture_timeout_ms` outside 100–5000 is allowed but logs a warning.
 
 See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contrib/handler-example.sh`](contrib/handler-example.sh) for a handler template. For a practical scan-to-PDF workflow, see [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh).
 

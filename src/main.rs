@@ -210,31 +210,103 @@ trait Host {
 
 // ── USB communication ────────────────────────────────────────────────
 
+/// Why the scanner could not be opened, with the next corrective step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenError {
+    NotFound,
+    Access,
+    Busy,
+    Other(rusb::Error),
+}
+
+impl From<rusb::Error> for OpenError {
+    fn from(e: rusb::Error) -> Self {
+        match e {
+            rusb::Error::NotFound | rusb::Error::NoDevice => Self::NotFound,
+            rusb::Error::Access => Self::Access,
+            rusb::Error::Busy => Self::Busy,
+            e => Self::Other(e),
+        }
+    }
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "scanner 04c5:11a2 not found; is the ADF lid open?"),
+            Self::Access => write!(
+                f,
+                "permission denied opening the scanner; install the udev rule \
+                 (70-s1500d.rules) and run as the s1500d service account, or as root"
+            ),
+            Self::Busy => write!(
+                f,
+                "scanner is in use by another program (scanbd, saned, another \
+                 s1500d, or a running scan); stop it and try again"
+            ),
+            Self::Other(e) => write!(f, "cannot open scanner: {e}"),
+        }
+    }
+}
+
 /// Open the scanner, returning a claimed device handle.
-pub(crate) fn try_open(ctx: &rusb::Context) -> Option<rusb::DeviceHandle<rusb::Context>> {
-    let handle = ctx.open_device_with_vid_pid(VID, PID)?;
+pub(crate) fn try_open(
+    ctx: &rusb::Context,
+) -> Result<rusb::DeviceHandle<rusb::Context>, OpenError> {
+    let device = ctx
+        .devices()?
+        .iter()
+        .find(|d| {
+            d.device_descriptor()
+                .is_ok_and(|desc| desc.vendor_id() == VID && desc.product_id() == PID)
+        })
+        .ok_or(OpenError::NotFound)?;
+    let handle = device.open()?;
     let _ = handle.set_auto_detach_kernel_driver(true);
-    handle.claim_interface(IFACE).ok()?;
-    Some(handle)
+    handle.claim_interface(IFACE)?;
+    Ok(handle)
 }
 
 /// The real host: libusb, child processes, and wall-clock time.
 struct UsbHost {
     ctx: rusb::Context,
+    /// Last open failure, so a closed lid is reported once, not every retry.
+    last_open_error: Option<OpenError>,
+}
+
+impl UsbHost {
+    fn try_open(&mut self) -> Option<rusb::DeviceHandle<rusb::Context>> {
+        match try_open(&self.ctx) {
+            Ok(handle) => {
+                self.last_open_error = None;
+                Some(handle)
+            }
+            Err(e) => {
+                if self.last_open_error != Some(e) {
+                    match e {
+                        OpenError::NotFound => info!("usb: {e}"),
+                        _ => warn!("usb: {e}"),
+                    }
+                    self.last_open_error = Some(e);
+                }
+                None
+            }
+        }
+    }
 }
 
 impl Host for UsbHost {
     type Handle = rusb::DeviceHandle<rusb::Context>;
 
     fn open(&mut self) -> Option<Self::Handle> {
-        try_open(&self.ctx)
+        self.try_open()
     }
 
     /// Used in the outer reconnect loop to ensure a clean connection after a
     /// previous s1500d process may have left the device in a bad state (e.g.,
     /// after `systemctl restart`).
     fn open_with_reset(&mut self) -> Option<Self::Handle> {
-        let handle = try_open(&self.ctx)?;
+        let handle = self.try_open()?;
         info!("usb: resetting device for clean state");
         if handle.reset().is_err() {
             warn!("usb: reset failed, proceeding with existing handle");
@@ -243,7 +315,7 @@ impl Host for UsbHost {
         // Drop stale handle, wait for device to re-enumerate, then re-open fresh.
         drop(handle);
         thread::sleep(Duration::from_millis(200));
-        try_open(&self.ctx)
+        self.try_open()
     }
 
     /// Takes ownership of the stale handle (preventing accidental reuse),
@@ -252,7 +324,7 @@ impl Host for UsbHost {
         let _ = handle.reset();
         drop(handle);
         thread::sleep(Duration::from_millis(200));
-        try_open(&self.ctx)
+        self.try_open()
     }
 
     fn release(&mut self, handle: Self::Handle) {
@@ -416,6 +488,8 @@ fn print_usage() {
          \x20 s1500d HANDLER           Run HANDLER on each raw event\n\
          \x20 s1500d -c CONFIG.toml    Gesture detection + profile dispatch\n\
          \x20 s1500d --doctor          Interactive hardware verification\n\
+         \x20 s1500d --check-config CONFIG.toml\n\
+         \x20                          Validate a config and its handler (no USB)\n\
          \x20 s1500d --version         Show version\n\
          \x20 s1500d --help            Show this message\n\
          \n\
@@ -455,7 +529,13 @@ impl Mode {
 
 fn run_forever(mode: Mode) -> ! {
     let ctx = rusb::Context::new().expect("failed to create USB context");
-    run(&mode, &mut UsbHost { ctx });
+    run(
+        &mode,
+        &mut UsbHost {
+            ctx,
+            last_open_error: None,
+        },
+    );
     unreachable!("the USB host never stops the event loop");
 }
 
@@ -703,6 +783,28 @@ fn main() {
         Some("--version" | "-V") => {
             println!("s1500d {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
+        }
+        Some("--check-config") => {
+            let Some(path) = args.get(2) else {
+                eprintln!("s1500d: --check-config requires a config file path");
+                std::process::exit(2);
+            };
+            match config::check_config(path) {
+                Ok(c) => {
+                    for warning in c.warnings() {
+                        eprintln!("s1500d: warning: {warning}");
+                    }
+                    println!(
+                        "{path}: ok (handler {}, gesture timeout {} ms, profiles {:?})",
+                        c.handler, c.gesture_timeout_ms, c.profiles
+                    );
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("s1500d: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Some("--doctor") => {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -1125,5 +1227,21 @@ mod tests {
         let (gesture, queue) = timeout(expired_release(5), &mode);
         assert!(queue.is_empty());
         assert!(matches!(gesture, GestureState::Idle));
+    }
+
+    // ── USB open diagnostics ─────────────────────────────────────
+
+    #[test]
+    fn open_errors_map_to_actionable_kinds() {
+        assert_eq!(OpenError::from(rusb::Error::NotFound), OpenError::NotFound);
+        assert_eq!(OpenError::from(rusb::Error::NoDevice), OpenError::NotFound);
+        assert_eq!(OpenError::from(rusb::Error::Access), OpenError::Access);
+        assert_eq!(OpenError::from(rusb::Error::Busy), OpenError::Busy);
+        assert_eq!(
+            OpenError::from(rusb::Error::Io),
+            OpenError::Other(rusb::Error::Io)
+        );
+        assert!(OpenError::Access.to_string().contains("udev rule"));
+        assert!(OpenError::Busy.to_string().contains("in use"));
     }
 }

@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, Write as IoWrite};
 use std::time::Duration;
 
-use crate::{poll_status, try_open, State};
+use crate::{poll_status, try_open, OpenError, State};
 
 const DOCTOR_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -61,14 +61,16 @@ pub fn doctor() {
     print!("[1/6] USB connection .......... ");
     let _ = io::stdout().flush();
     let handle = match try_open(&ctx) {
-        Some(h) => {
+        Ok(h) => {
             println!("ok");
             h
         }
-        None => {
+        Err(e) => {
             println!("FAIL");
-            println!("\n      Scanner not found (04c5:11a2).");
-            println!("      Is the ADF lid open? Check: lsusb | grep 04c5");
+            println!("\n      {e}");
+            if e == OpenError::NotFound {
+                println!("      Check: lsusb -d 04c5:11a2");
+            }
             std::process::exit(1);
         }
     };
