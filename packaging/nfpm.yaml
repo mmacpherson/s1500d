@@ -23,8 +23,8 @@ contents:
     mode: 0755
 - src: contrib/s1500d.service
   dst: /usr/lib/systemd/system/s1500d.service
-- src: contrib/99-scansnap.rules
-  dst: /usr/lib/udev/rules.d/99-scansnap.rules
+- src: contrib/70-s1500d.rules
+  dst: /usr/lib/udev/rules.d/70-s1500d.rules
 - src: contrib/s1500d.sysusers
   dst: /usr/lib/sysusers.d/s1500d.conf
 - src: contrib/config.toml

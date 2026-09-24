@@ -35,7 +35,12 @@ package() {
     cd "$pkgname-$pkgver"
     install -Dm0755 target/release/s1500d "$pkgdir/usr/bin/s1500d"
     install -Dm0644 contrib/s1500d.service "$pkgdir/usr/lib/systemd/system/s1500d.service"
-    install -Dm0644 contrib/99-scansnap.rules "$pkgdir/usr/lib/udev/rules.d/99-scansnap.rules"
+    # Releases before the rename ship the rule as 99-scansnap.rules.
+    if [[ -f contrib/70-s1500d.rules ]]; then
+        install -Dm0644 contrib/70-s1500d.rules "$pkgdir/usr/lib/udev/rules.d/70-s1500d.rules"
+    else
+        install -Dm0644 contrib/99-scansnap.rules "$pkgdir/usr/lib/udev/rules.d/99-scansnap.rules"
+    fi
     if [[ -f contrib/s1500d.sysusers ]]; then
         install -Dm0644 contrib/s1500d.sysusers "$pkgdir/usr/lib/sysusers.d/s1500d.conf"
     fi

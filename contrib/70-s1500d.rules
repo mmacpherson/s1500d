@@ -1,4 +1,7 @@
 # Allow the s1500d service and the active desktop user to access the S1500.
-# Install: sudo cp 99-scansnap.rules /etc/udev/rules.d/
+# The uaccess tag must be set before systemd's 73-seat-late.rules, which
+# grants the active desktop user access only to devices already tagged;
+# hence the 70- prefix.
+# Install: sudo cp 70-s1500d.rules /etc/udev/rules.d/
 #          sudo udevadm control --reload-rules
 SUBSYSTEM=="usb", ATTR{idVendor}=="04c5", ATTR{idProduct}=="11a2", GROUP="s1500d", MODE="0660", TAG+="uaccess"
