@@ -131,6 +131,14 @@ For a multi-press gesture, each next press must begin before the timeout after
 the previous release expires. How long you hold the button does not affect the
 gesture.
 
+Handlers run one at a time, synchronously, with the USB device released —
+including `device-arrived`. Events observed in the same poll are delivered in
+order (paper before button). s1500d cannot see the scanner while a handler
+runs: afterwards, a changed button state is delivered as one press or
+release (timed when it was seen), paper changes are absorbed (a scan usually
+consumes the paper), and a press and release that both happen during the
+handler are not seen.
+
 Set `log_level = "debug"` in your config file for verbose output. The `RUST_LOG` environment variable overrides config if set.
 
 ## Configuration
