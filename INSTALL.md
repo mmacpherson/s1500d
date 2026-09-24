@@ -146,6 +146,34 @@ service. The packaged service runs as the dedicated `s1500d` user, sets
 make `/var/lib/s1500d` writable by that account. It also sets `ProtectHome=true`,
 so it cannot write to a user's `$HOME/Scans` without a systemd override.
 
+For the PDF handler, run `scanimage -L` and set `SCAN_DEVICE` to the exact
+reported name, including the serial number (not a wildcard). For example:
+
+```sh
+SCAN_DEVICE='fujitsu:ScanSnap S1500:YOUR_SERIAL' SCAN_DIR="$HOME/Scans" \
+    ./contrib/handler-scan-to-pdf.sh scan standard
+```
+
+For service use, set the same `SCAN_DEVICE` in the handler or in a systemd
+drop-in with `[Service]` and
+`Environment="SCAN_DEVICE=fujitsu:ScanSnap S1500:YOUR_SERIAL"`.
+The PDF handler creates scan directories with mode 0750 and completed PDFs
+with mode 0640, owned by the invoking account/group. It preserves existing
+directory permissions. Under the packaged service these files belong to
+`s1500d:s1500d`; verify reader access as described below.
+
+Failed attempts return nonzero and retain pages in private (0700)
+`$SCAN_DIR/.s1500d-*` directories. Their paths appear on stderr and in the log.
+An administrator or the service account can inspect and recover them; the last
+TIFF may be incomplete after an acquisition error. Failed attempts are never
+automatically deleted when they contain files. Empty working directories are
+removed when no pages were acquired. Existing output filenames cause failure and retention,
+not overwrite. The destination filesystem must support hard links, used to
+publish the completed PDF atomically. See the [worked example](docs/index.md#scan-to-pdf).
+If an importer or sync tool watches `SCAN_DIR` recursively, exclude `.s1500d-*`
+directories or use a separate unwatched scan directory: recovery files and the
+staged PDF are not ready for consumption.
+
 ## Enable the service
 
 After `/etc/s1500d/config.toml` points to a tested handler:
