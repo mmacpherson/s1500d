@@ -250,56 +250,75 @@ handler are not seen.
 The
 [contrib/handler-scan-to-pdf.sh](https://github.com/mmacpherson/s1500d/blob/main/contrib/handler-scan-to-pdf.sh)
 script is a practical handler that scans all pages in the ADF to a timestamped
-PDF using `scanimage` and `img2pdf`. Here's how it works:
+PDF using `scanimage` and `img2pdf`. Use the maintained script linked above.
+With `SCAN_DEVICE` unset, the handler runs `scanimage -L`, selects exactly one
+ScanSnap S1500 and logs its exact name. No matches, multiple matches or a failed
+lookup stop the attempt with the device list and instructions. Other scanner
+models do not count as matches.
 
-```bash
-#!/bin/bash
-SCAN_DIR="${SCAN_DIR:-$HOME/Scans}"
-EVENT="$1"
-PROFILE="${2:-scan}"
+Discovery runs on every scan. With `SANE_CONFIG_DIR` unset, it looks for a
+readable `fujitsu.conf` in the current directory, `/etc/sane.d`, then
+`/usr/local/etc/sane.d`, and tries a private temporary Fujitsu-only configuration.
+This configuration is removed afterwards and never changes acquisition settings.
+Explicit `SANE_CONFIG_DIR` values, including empty values and search lists, use
+full discovery unchanged. Missing configuration, preparation errors, failed lookups, or
+fast lookups without an S1500 device entry also fall back to full discovery.
+Diagnostic text alone does not count as a device. That can add several
+seconds while enabled backends are probed. For regular use, set
+`SCAN_DEVICE` to the exact name in the detection log to skip that delay;
+the handler does not persist its selection between invocations.
+An off or unplugged scanner can leave the fast lookup empty, triggering the
+slower full lookup before failure. Pinning `SCAN_DEVICE` skips that lookup too.
 
-case "$EVENT" in
-    scan)
-        mkdir -p "$SCAN_DIR"
-        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        OUTFILE="$SCAN_DIR/${PROFILE}_${TIMESTAMP}.pdf"
-        TMPDIR=$(mktemp -d)
-        trap 'rm -rf "$TMPDIR"' EXIT
+For a single-scanner setup:
 
-        logger -t s1500d "Scanning: profile=$PROFILE → $OUTFILE"
-
-        scanimage \
-            --device-name="fujitsu:ScanSnap S1500:*" \
-            --source="ADF Duplex" \
-            --mode=Color \
-            --resolution=300 \
-            --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" \
-            --batch-count=0 \
-            2>/dev/null
-
-        PAGES=("$TMPDIR"/page_*.tiff)
-        if [ ${#PAGES[@]} -eq 0 ] || [ ! -f "${PAGES[0]}" ]; then
-            logger -t s1500d "No pages scanned"
-            exit 1
-        fi
-
-        img2pdf "${PAGES[@]}" -o "$OUTFILE"
-        logger -t s1500d "Saved $OUTFILE (${#PAGES[@]} pages)"
-        ;;
-    device-arrived)
-        logger -t s1500d "Scanner ready"
-        ;;
-    device-left)
-        logger -t s1500d "Scanner closed"
-        ;;
-esac
+```sh
+SCAN_DIR="$HOME/Scans" ./contrib/handler-scan-to-pdf.sh scan standard
 ```
 
-The pipeline is: `scanimage` pulls all pages from the ADF as TIFFs into a temp
-directory, then `img2pdf` combines them into a single PDF. The profile name
-(from gesture detection, described below) becomes the filename prefix, so you
-can tell at a glance what kind of scan it was.
+An explicit `SCAN_DEVICE` skips lookup. Use the exact name (including serial
+number); a literal `*` is not a device selector. For example:
+
+```sh
+scanimage -L
+SCAN_DEVICE='fujitsu:ScanSnap S1500:YOUR_SERIAL' SCAN_DIR="$HOME/Scans" \
+    ./contrib/handler-scan-to-pdf.sh scan standard
+```
+
+The handler acquires TIFF pages into a private directory
+`$SCAN_DIR/.s1500d-XXXXXXXXXX`, then converts them to a staged PDF. It publishes
+`standard_YYYYMMDD-HHMMSS.pdf` only after successful acquisition and conversion.
+An existing destination is never overwritten: a same-second filename collision
+fails and retains the new attempt for recovery. Successful attempts remove their
+working files.
+
+Acquisition errors (including a jam after some pages), conversion errors, and
+publication failures return nonzero, retain recovery files, and print their
+location to stderr and the system log. Scanner and converter diagnostics remain
+visible. HUP/INT/TERM also retain the attempt; after an uncatchable termination,
+look for the hidden `.s1500d-*` directories. Inspect partial TIFFs before using
+them: the last page may be incomplete. Nothing automatically retries or deletes
+failed attempts containing files. Attempts with no pages remove their working
+directory only if it is empty, then report failure with the scanner exit code.
+Recover or remove retained attempts manually after checking their contents;
+a retained `scan.pdf` is not proof of a complete acquisition.
+
+Files belong to the invoking account. New scan directories are mode 0750,
+completed PDFs are 0640, and recovery directories are private (0700).
+Existing scan-directory permissions are not changed. Under the packaged service,
+the owner/group is `s1500d` and `SCAN_DIR=/var/lib/s1500d/scans`; readers need
+appropriate group membership and directory access. Recovery requires the service
+account or an administrator. Leave `SCAN_DEVICE` unset for auto-detection, or
+set it in the handler or a systemd environment override. An explicitly empty
+value is an error; `unset SCAN_DEVICE` restores auto-detection. Verify foreground
+scanning and access before enabling
+the service. This example requires a filesystem supporting hard links for atomic
+publication; publication failure keeps the recovery files.
+
+Keep `SCAN_DIR` outside recursively watched import or sync folders, or configure
+those consumers to exclude `.s1500d-*` directories. These directories contain raw
+pages and a PDF while it is still being written; only top-level published PDFs
+are ready for consumption.
 
 You'll need `sane` and `img2pdf` installed:
 
@@ -380,45 +399,23 @@ destination, perform OCR or other post-processing, upload the result, send a
 notification, or run something unrelated to scanning. Here are some natural
 scan settings for reference:
 
+For example, add this before the handler's acquisition step:
+
 ```bash
+SCAN_OPTIONS=(--source="ADF Duplex" --mode=Color --resolution=300)
 case "$PROFILE" in
-    standard)
-        scanimage --source="ADF Duplex" --mode=Color \
-            --resolution=300 --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
-        ;;
-    legal)
-        scanimage --source="ADF Duplex" --mode=Color \
-            --resolution=300 --page-width=215.872 --page-height=355.6 \
-            -x 215.872 -y 355.6 --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
-        ;;
-    a4)
-        scanimage --source="ADF Duplex" --mode=Color \
-            --resolution=300 --page-width=210 --page-height=297 \
-            -x 210 -y 297 --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
-        ;;
-    photo)
-        scanimage --source="ADF Front" --mode=Color \
-            --resolution=600 --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
-        ;;
-    standard-bw)
-        scanimage --source="ADF Duplex" --mode=Lineart \
-            --resolution=300 --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
-        ;;
-    standard-gray)
-        scanimage --source="ADF Duplex" --mode=Gray \
-            --resolution=300 --format=tiff \
-            --batch="$TMPDIR/page_%04d.tiff" --batch-count=0
-        ;;
+    legal) SCAN_OPTIONS+=(--page-width=215.872 --page-height=355.6 -x 215.872 -y 355.6) ;;
+    a4) SCAN_OPTIONS+=(--page-width=210 --page-height=297 -x 210 -y 297) ;;
+    photo) SCAN_OPTIONS=(--source="ADF Front" --mode=Color --resolution=600) ;;
+    standard-bw) SCAN_OPTIONS=(--source="ADF Duplex" --mode=Lineart --resolution=300) ;;
+    standard-gray) SCAN_OPTIONS=(--source="ADF Duplex" --mode=Gray --resolution=300) ;;
 esac
 ```
 
-The scan-to-PDF handler above uses the profile as a filename prefix. You could
-extend it with a case block like this to vary the scan parameters per profile.
+Replace the handler's fixed source, mode, and resolution arguments with
+`"${SCAN_OPTIONS[@]}"`, keeping its exact device selection, batch path, and
+acquisition/conversion failure handling. The profile remains the filename prefix;
+use only letters, digits, underscores, and hyphens.
 
 ## running as a systemd service
 

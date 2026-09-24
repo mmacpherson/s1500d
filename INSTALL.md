@@ -146,6 +146,64 @@ service. The packaged service runs as the dedicated `s1500d` user, sets
 make `/var/lib/s1500d` writable by that account. It also sets `ProtectHome=true`,
 so it cannot write to a user's `$HOME/Scans` without a systemd override.
 
+The PDF handler automatically selects exactly one ScanSnap S1500 from
+`scanimage -L` when `SCAN_DEVICE` is unset. With no matching device, multiple
+matches, or failed discovery, it stops before scanning and reports the list
+and setup instructions. For a single-scanner setup:
+
+```sh
+SCAN_DIR="$HOME/Scans" ./contrib/handler-scan-to-pdf.sh scan standard
+```
+
+To choose explicitly, set `SCAN_DEVICE` to the exact reported name, including
+the serial number (not a wildcard). This skips discovery entirely:
+
+```sh
+SCAN_DEVICE='fujitsu:ScanSnap S1500:YOUR_SERIAL' SCAN_DIR="$HOME/Scans" \
+    ./contrib/handler-scan-to-pdf.sh scan standard
+```
+
+Discovery runs before every scan. If `SANE_CONFIG_DIR` is unset, the handler
+looks for readable `fujitsu.conf` in the current directory, `/etc/sane.d`, then
+`/usr/local/etc/sane.d`. It copies that file into a private temporary directory
+with only the Fujitsu backend enabled, used solely for discovery and then
+removed. Acquisition retains the original SANE configuration.
+
+An explicitly set `SANE_CONFIG_DIR` (including an empty value or search list)
+bypasses this optimization and is passed through unchanged. If configuration
+cannot be found/copied or the fast lookup fails or returns no devices, the
+handler falls back to full discovery. A lookup returning only diagnostics or
+other scanner models also falls back; it must list an S1500 to be usable.
+Probing all enabled backends can add
+several seconds before acquisition starts. For regular button-driven scanning, set
+`SCAN_DEVICE` to the exact name logged by a successful detection to avoid that
+delay. Detection does not save the name between invocations.
+An off or unplugged scanner can produce an empty fast lookup, so such attempts
+still pay the full discovery delay before failing. Pinning `SCAN_DEVICE` also
+skips discovery in this case.
+
+For service use, leave `SCAN_DEVICE` unset for auto-detection, or set it in the handler or in a systemd
+drop-in with `[Service]` and
+`Environment="SCAN_DEVICE=fujitsu:ScanSnap S1500:YOUR_SERIAL"`.
+An explicitly empty value is an error; use `unset SCAN_DEVICE` to restore
+auto-detection. Discovery runs as the handler's account and needs USB access.
+The PDF handler creates scan directories with mode 0750 and completed PDFs
+with mode 0640, owned by the invoking account/group. It preserves existing
+directory permissions. Under the packaged service these files belong to
+`s1500d:s1500d`; verify reader access as described below.
+
+Failed attempts return nonzero and retain pages in private (0700)
+`$SCAN_DIR/.s1500d-*` directories. Their paths appear on stderr and in the log.
+An administrator or the service account can inspect and recover them; the last
+TIFF may be incomplete after an acquisition error. Failed attempts are never
+automatically deleted when they contain files. Empty working directories are
+removed when no pages were acquired. Existing output filenames cause failure and retention,
+not overwrite. The destination filesystem must support hard links, used to
+publish the completed PDF atomically. See the [worked example](docs/index.md#scan-to-pdf).
+If an importer or sync tool watches `SCAN_DIR` recursively, exclude `.s1500d-*`
+directories or use a separate unwatched scan directory: recovery files and the
+staged PDF are not ready for consumption.
+
 ## Enable the service
 
 After `/etc/s1500d/config.toml` points to a tested handler:

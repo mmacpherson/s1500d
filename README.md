@@ -168,6 +168,19 @@ command you choose.
 
 See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contrib/handler-example.sh`](contrib/handler-example.sh) for a handler template. For a practical scan-to-PDF workflow, see [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh).
 
+With `SCAN_DEVICE` unset, the PDF handler runs `scanimage -L` and selects the
+scanner only if exactly one ScanSnap S1500 is listed. Otherwise it reports the
+list and asks for an exact `SCAN_DEVICE`; an explicit value skips discovery.
+Discovery runs on every scan. With `SANE_CONFIG_DIR` unset and a readable
+`fujitsu.conf`, it first tries a temporary Fujitsu-only configuration. Custom
+SANE configurations, missing configuration, or failed/empty fast lookups use
+full discovery, which can take several seconds. Set `SCAN_DEVICE` to the logged
+name to skip discovery entirely.
+It keeps failed attempts in private `$SCAN_DIR/.s1500d-*`
+directories and reports their recovery paths. Completed PDFs are mode 0640,
+owned by the invoking account, and never overwrite an existing filename.
+See [installation and access setup](INSTALL.md#configure-what-happens).
+
 ## How it works
 
 The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a single `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100ms and decodes the 12-byte response to detect button presses and paper presence. State transitions are edge-triggered — the handler fires only when something changes.
