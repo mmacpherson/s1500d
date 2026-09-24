@@ -209,6 +209,21 @@ If an importer or sync tool watches `SCAN_DIR` recursively, exclude `.s1500d-*`
 directories or use a separate unwatched scan directory: recovery files and the
 staged PDF are not ready for consumption.
 
+Before enabling the service, check the config and handler without the scanner,
+as the account the service runs as:
+
+```sh
+sudo -u s1500d s1500d --check-config /etc/s1500d/config.toml
+```
+
+This checks that the account can execute the handler. It cannot reproduce the
+service's systemd sandbox (for example `ProtectHome=true`), so still test the
+handler in the foreground as described above.
+
+If `--doctor` or the service log reports that the scanner is in use, stop the
+other program (scanbd, saned, another s1500d, or a running scan). If it
+reports permission denied, check the udev rule and the account running s1500d.
+
 ## Enable the service
 
 After `/etc/s1500d/config.toml` points to a tested handler:

@@ -359,9 +359,16 @@ log_level = "info"
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `handler` | yes | — | Path to the script called on events |
-| `gesture_timeout_ms` | no | `600` | How long to wait (in ms) for additional button presses before dispatching a gesture |
-| `log_level` | no | `"info"` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this if set. |
+| `gesture_timeout_ms` | no | `600` | How long to wait (in ms; recommended 100–5000, must be above 0) for additional button presses before dispatching a gesture |
+| `log_level` | no | `"info"` | Log verbosity: `off`, `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this if set. |
 | `profiles` | no | (empty) | Map of press count → profile name (see below). Profile names are arbitrary labels — your handler script decides what they mean. |
+
+s1500d exits at startup if the config has an unknown key, a
+`gesture_timeout_ms` of 0, an unknown `log_level`, an invalid profile, or a
+handler that is missing or not executable. A `gesture_timeout_ms` outside the
+recommended 100–5000 only logs a warning. Run
+`s1500d --check-config /etc/s1500d/config.toml` to check a config without the
+scanner.
 
 ### events in config mode
 
