@@ -1,6 +1,6 @@
 # Maintainer: Mike Macpherson <mmacpherson@users.noreply.github.com>
 pkgname=s1500d
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc='Bespoke event daemon for the Fujitsu ScanSnap S1500'
 url='https://github.com/mmacpherson/s1500d'
@@ -12,7 +12,7 @@ install=s1500d.install
 backup=('etc/s1500d/config.toml')
 options=('!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('af6cd27693f360ee3998f9b1b1c9862914c370cb4ec084f3ad7da955349f44a8')
+sha256sums=('7f192665d6a5347e968dd91278009ca00b0d69f250194a00f8fb931c3bf895d6')
 
 prepare() {
     cd "$pkgname-$pkgver"
