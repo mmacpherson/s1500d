@@ -5,10 +5,9 @@ title: one-touch scanning on Linux without scanbd
 
 *[source and installation](https://github.com/mmacpherson/s1500d)*
 
-**TL;DR:** s1500d is a tiny Rust daemon that monitors the Fujitsu ScanSnap S1500
-via direct USB and runs your script when you press the scan button or insert
-paper. One USB command per poll cycle, no SANE stack, no scanbd. With a scan
-handler configured: open the lid, press the button, get a PDF.
+**TL;DR:** s1500d is a small, fast background program that makes the scan button
+on a Fujitsu ScanSnap S1500 work on Linux. Once it's set up: open the lid, load
+your paper, press the button, and get a PDF.
 
 ## should you use this?
 
