@@ -36,8 +36,9 @@ scanbd. Other ScanSnap models and macOS/Windows are not currently supported.
 - **Runs a handler script** on scanner events (button press, paper inserted/removed, lid open/close)
 - **Gesture detection** — optional TOML config maps multi-press patterns to named profiles (single press = standard scan, double press = legal size, etc.)
 - **USB release during handler execution** — the daemon releases the USB device before calling your handler, so `scanimage` and other SANE tools can claim the scanner
-- **`--doctor` mode** — interactive hardware verification that walks through each sensor
-- **Lid detection via USB presence** — opening the automatic document feed (ADF) lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect), so no polling is needed for door state
+- **`--doctor` mode** — interactive hardware verification that walks through each sensor, and says whether the scanner is missing, not permitted, or in use by another program
+- **`--check-config`** — validates a config file and its handler without the scanner
+- **Lid detection via USB presence** — opening the automatic document feed (ADF) lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect), so door state comes from USB presence rather than the status poll
 
 ## Quick evaluation
 
@@ -128,9 +129,10 @@ The complete button-gesture behavior in config mode is:
 | Triple press | Dispatches the profile mapped to `3` after the timeout |
 | Any higher configured number of presses | Dispatches the profile mapped to that number |
 
-For a multi-press gesture, each next press must begin before the timeout after
-the previous release expires. How long you hold the button does not affect the
-gesture.
+The timeout runs from when s1500d sees each press end; the next press must be
+seen before it expires. Holding the button longer does not select a different
+profile. Press at a normal pace: very rapid taps can merge into one press, so a very
+fast double press may be counted as a single press.
 
 Handlers run one at a time, synchronously, with the USB device released —
 including `device-arrived`. Events observed in the same poll are delivered in
@@ -190,7 +192,7 @@ See [installation and access setup](INSTALL.md#configure-what-happens).
 
 ## How it works
 
-The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a single `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100ms and decodes the 12-byte response to detect button presses and paper presence. State transitions are edge-triggered — the handler fires only when something changes.
+The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a single `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100 ms (every 20 ms while waiting for another press of a gesture) and decodes the 12-byte response (checking the 13-byte status reply that follows) to detect button presses and paper presence. State transitions are edge-triggered — the handler fires only when something changes.
 
 The protocol was reverse-engineered from USB captures and the SANE `fujitsu` backend source code, then empirically verified with a physical scanner using the included [`docs/explore.py`](docs/explore.py) diagnostic tool.
 

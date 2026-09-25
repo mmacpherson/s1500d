@@ -148,7 +148,7 @@ This discrepancy was verified using `explore.py --discover`, which guides a huma
 
 ## Reproducing this on other models
 
-If you have a different ScanSnap model, you can map its hardware status bits using the included Python diagnostic tool:
+If you have a different ScanSnap model, you can map its hardware status bits using the included Python diagnostic tool. It is hard-coded for the S1500 (`VID`/`PID` near the top of `docs/explore.py`); change those to your model's `lsusb` ID first. A different model may also use different endpoints or commands, so treat the results as exploratory:
 
 ```sh
 python3 docs/explore.py --discover
@@ -158,7 +158,6 @@ This runs a guided walkthrough:
 1. Takes a baseline reading with no paper and button untouched
 2. Asks you to insert paper, records which bits changed
 3. Asks you to press and hold the button, records which bits changed
-4. Asks you to tap the button quickly, records which bits changed
 
 The tool requires `pyusb` (`pip install pyusb`) and root access (or appropriate udev rules). It handles kernel driver detachment and USB reset automatically.
 

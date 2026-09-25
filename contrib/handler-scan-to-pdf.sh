@@ -7,6 +7,8 @@
 #   Fedora: dnf install sane-backends img2pdf
 #
 # Scans all pages in the ADF to a timestamped PDF.
+# Use in config mode (s1500d -c): it acts only on "scan <profile>" events,
+# so as a raw handler (s1500d handler-scan-to-pdf.sh) it never scans.
 # Auto-detects one S1500; set SCAN_DEVICE to an exact scanimage -L name to override.
 # Profile name (from config.toml) is used as a filename prefix.
 # Failed attempts with files remain in SCAN_DIR/.s1500d-* for manual recovery.

@@ -105,7 +105,9 @@ remove that file; if you copied it to `/etc/udev/rules.d/` by hand, delete it
 there and install `contrib/70-s1500d.rules` instead.
 
 If `lsusb` sees the scanner but `--doctor` cannot open it, reload the installed
-udev rule, close and reopen the lid, and try again:
+udev rule, then remove any paper, close and reopen the lid (the paper chute,
+which powers the scanner; not the ADF release used to clear jams), and try
+again:
 
 ```sh
 sudo udevadm control --reload-rules
@@ -132,7 +134,10 @@ Start with [`contrib/config.toml`](contrib/config.toml) and
 [`contrib/handler-example.sh`](contrib/handler-example.sh). The example handler
 only logs. [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh) is
 a starting point for a real scan workflow and additionally requires SANE and
-`img2pdf`:
+`img2pdf`. It acts only on the `scan` event, which only config mode
+(`s1500d -c`) sends; run as a raw handler (`s1500d handler-scan-to-pdf.sh`) it
+never scans. Point `handler` in your config at it, and install its
+dependencies:
 
 ```sh
 # Arch Linux

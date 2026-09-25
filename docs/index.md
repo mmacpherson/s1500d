@@ -150,6 +150,9 @@ cargo install --path .
 # Or install the binary plus systemd, udev, config, and handler files
 make release
 sudo make install
+sudo systemd-sysusers s1500d.conf
+sudo udevadm control --reload-rules
+sudo systemctl daemon-reload
 ```
 
 See [INSTALL.md](https://github.com/mmacpherson/s1500d/blob/main/INSTALL.md) for the full details.
@@ -192,9 +195,10 @@ The complete button-gesture behavior in config mode is:
 | Triple press | Dispatches the profile mapped to `3` after the timeout |
 | Any higher configured number of presses | Dispatches the profile mapped to that number |
 
-For a multi-press gesture, each next press must begin before the timeout after
-the previous release expires. How long you hold the button does not affect the
-gesture.
+The timeout runs from when s1500d sees each press end; the next press must be
+seen before it expires. Holding the button longer does not select a different
+profile. Press at a normal pace: very rapid taps can merge into one press, so a very
+fast double press may be counted as a single press.
 
 To actually *do* something with these events, pass a handler script:
 
@@ -251,6 +255,9 @@ The
 [contrib/handler-scan-to-pdf.sh](https://github.com/mmacpherson/s1500d/blob/main/contrib/handler-scan-to-pdf.sh)
 script is a practical handler that scans all pages in the ADF to a timestamped
 PDF using `scanimage` and `img2pdf`. Use the maintained script linked above.
+It acts only on the `scan` event, which only config mode (`s1500d -c`) sends;
+run as a raw handler (`s1500d handler-scan-to-pdf.sh`) it never scans. Set
+`handler` in your config to its path.
 With `SCAN_DEVICE` unset, the handler runs `scanimage -L`, selects exactly one
 ScanSnap S1500 and logs its exact name. No matches, multiple matches or a failed
 lookup stop the attempt with the device list and instructions. Other scanner
@@ -396,7 +403,7 @@ press inside it increments the count, while letting it expire dispatches the
 gesture.
 
 Press the button once, wait 600ms, and your handler gets called with
-`scan standard`. Press twice quickly and it gets `scan legal`. Three times for
+`scan standard`. Press twice within the window and it gets `scan legal`. Three times for
 `scan photo`. Unmapped press counts are logged and ignored.
 
 The config above maps three press counts, but s1500d does not hard-code a finite
@@ -462,11 +469,11 @@ If things aren't working, the `--doctor` flag runs an interactive hardware check
 s1500d --doctor
 ```
 
-It'll ask you to open the lid, insert paper, press the button, and so on — confirming that the daemon can see each event. Useful for verifying that USB permissions are set up correctly and the scanner is responding as expected.
+With the lid open, it asks you to insert and remove paper and to press and release the button, confirming that the daemon can see each event. If it cannot open the scanner, it says whether the scanner was not found, permission was denied, or another program (scanbd, saned, another s1500d, or a running scan) is using it.
 
 ## under the hood
 
-The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100ms and decodes the 12-byte response to detect button presses and paper presence. State transitions are edge-triggered — the handler only fires when something changes.
+The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100 ms (every 20 ms while waiting for another press of a gesture) and decodes the 12-byte response (checking the 13-byte status reply that follows) to detect button presses and paper presence. State transitions are edge-triggered — the handler only fires when something changes.
 
 Door state isn't in the status response at all. Opening the ADF lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect). So the daemon has two loops: an outer one watching for USB connect/disconnect, and an inner one polling `GET_HW_STATUS` while the device is present.
 

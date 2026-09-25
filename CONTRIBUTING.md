@@ -20,17 +20,21 @@ cargo build --release  # release build (stripped, LTO)
 
 ## Testing
 
-Run the unit test suite with:
+Run the test suites with:
 
 ```sh
-cargo test
+cargo test --all-targets --locked
+python3 -m unittest discover -s tests
 ```
 
-Tests cover configuration parsing, gesture state-machine logic, and event
-dispatch — no hardware required.
+The Rust tests cover configuration validation, USB transaction checks, and the
+real event loop driven by a scripted scanner (`src/sim.rs`), including handler
+handoff, reconnects, and gestures. The Python tests run
+`contrib/handler-scan-to-pdf.sh` against stub `scanimage`/`img2pdf` commands. No
+hardware is required.
 
-For **physical hardware** verification, use `--doctor` mode, which walks through
-each sensor interactively:
+For **physical hardware**, `--doctor` checks that each sensor event is seen
+(a real scan workflow still needs testing with your handler):
 
 ```sh
 cargo run -- --doctor
@@ -49,11 +53,14 @@ RUST_LOG=debug cargo run
 | `src/main.rs` | USB protocol, state machine, event loop, handler dispatch |
 | `src/config.rs` | TOML config parsing and validation |
 | `src/doctor.rs` | Interactive `--doctor` hardware check |
+| `src/sim.rs`, `src/sim/` | Scripted scanner for event-loop tests (test-only) |
+| `tests/` | Tests for the example PDF handler |
 
 ## Code style
 
 - Run `cargo fmt` before committing (enforced by pre-commit hooks)
 - Run `cargo clippy --all-targets -- -D warnings` to catch lint issues
+- Shell scripts are checked with ShellCheck (enforced by pre-commit hooks)
 - Keep the codebase minimal — s1500d is intentionally small
 
 ## Documenting new ScanSnap models
@@ -61,7 +68,7 @@ RUST_LOG=debug cargo run
 If you have a different ScanSnap model and want to map its hardware status bits:
 
 1. Find your scanner's VID:PID with `lsusb`
-2. Run the Python diagnostic tool:
+2. Set `VID` and `PID` near the top of `docs/explore.py` to your scanner's ID, then run the Python diagnostic tool:
    ```sh
    python3 docs/explore.py --discover
    ```
