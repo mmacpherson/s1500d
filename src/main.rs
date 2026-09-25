@@ -99,7 +99,7 @@ impl State {
         }
         Some(Self {
             paper: buf[3] & 0x80 == 0,
-            // bit 5 (0x20) = button held; bit 0 (0x01) = button momentary/tap
+            // bit 5 (0x20) = held (longer presses); bit 0 (0x01) = pulse seen as a press ends
             button: buf[4] & 0x21 != 0,
         })
     }
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn state_button_momentary_tap() {
-        // byte 4 = 0x01 (bit 0 = momentary tap)
+        // byte 4 = 0x01 (bit 0 = pulse seen as a quick tap ends)
         let buf = [0, 0, 0, 0x80, 0x01, 0, 0, 0, 0, 0, 0, 0];
         let s = State::from_response(&buf).unwrap();
         assert!(s.button);

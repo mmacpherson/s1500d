@@ -30,6 +30,12 @@ repos:
   - id: typos
     args: [--force-exclude]
     files: \.(md|txt)$
+- repo: https://github.com/shellcheck-py/shellcheck-py
+  rev: v0.11.0.1
+  hooks:
+  - id: shellcheck
+    # makepkg recipes define variables makepkg reads; not standalone shell.
+    exclude: ^PKGBUILD$
 - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
   rev: v2.16.0
   hooks:

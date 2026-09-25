@@ -315,6 +315,11 @@ scanning and access before enabling
 the service. This example requires a filesystem supporting hard links for atomic
 publication; publication failure keeps the recovery files.
 
+The example converts 300 dpi colour pages to PDF losslessly, so files are
+large: a measured 4-page duplex scan was about 60 MB, and size varies with page
+content. For smaller files, change the scan mode or resolution, or run a
+downstream PDF optimization or compression step.
+
 Keep `SCAN_DIR` outside recursively watched import or sync folders, or configure
 those consumers to exclude `.s1500d-*` directories. These directories contain raw
 pages and a PDF while it is still being written; only top-level published PDFs

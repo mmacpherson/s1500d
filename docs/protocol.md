@@ -50,8 +50,10 @@ envelope itself. s1500d treats that, a short write, a data phase other than
 12 bytes, or any status other than good as a failed poll.
 
 The status envelope layout (`USB_STATUS_LEN = 0x0D`, `USB_STATUS_OFFSET = 0x09`)
-is taken from the SANE 1.4.0 `fujitsu` backend. The 12-byte data responses below
-were captured from an S1500; status-envelope bytes have not yet been captured.
+is taken from the SANE 1.4.0 `fujitsu` backend. On an S1500 (September 2026),
+every status envelope in the reviewed tap and hold captures (1,473 polls) was
+`53 00 00 00 00 00 00 00 00 00 00 00 00`; busy or error statuses have not been observed on hardware. The
+12-byte data responses below were also captured from an S1500.
 
 These constants were confirmed by cross-referencing the SANE `fujitsu` backend:
 - `USB_COMMAND_CODE = 0x43`, `USB_COMMAND_LEN = 0x1F (31)`, `USB_COMMAND_OFFSET = 0x13 (19)`
@@ -72,7 +74,7 @@ Returns **12 bytes**. Empirically verified bit mapping:
 |------|-----|--------|---------|
 | 3    | 7   | `0x80` | Hopper empty (see note below) |
 | 4    | 5   | `0x20` | Scan button physically held down |
-| 4    | 0   | `0x01` | Scan button momentary/tap (set transiently for ~1 poll cycle) |
+| 4    | 0   | `0x01` | Scan button pulse (seen for one poll at the end of isolated taps and holds in 2026 captures) |
 | 4    | 7   | `0x80` | "Virgin" flag (see note below) |
 
 ### Hopper bit (byte 3, bit 7)
@@ -83,14 +85,34 @@ This bit is **inverted from what you'd expect**: `1` means the hopper is **empty
 
 The scanner reports button state through two different bits depending on how the button is pressed:
 
-- **Bit 5 (`0x20`)** — set while the button is physically held down. This is the sustained-hold signal.
-- **Bit 0 (`0x01`)** — set transiently for approximately one poll cycle on a quick tap. If you're only checking bit 5, you'll miss quick taps entirely.
+- **Bit 5 (`0x20`)** — set while the button is held down. In 2026 captures it
+  appeared only for presses the operator held for roughly half a second or
+  more; no quick tap showed it.
+- **Bit 0 (`0x01`)** — in 2026 captures of isolated taps and holds, seen for a
+  single poll as the press ended. Its exact timing and whether it latches between
+  polls are not established. If you're only checking bit 5, you'll miss quick
+  taps entirely.
+
+Captured at a 100 ms poll interval (2026-09-24):
+
+```
+5 s hold:   00 (idle) → 20 ×42 polls → 21 ×1 → 00
+Quick tap:  00 (idle) → 01 ×1 → 00
+```
+
+Three consecutive `01` polls were also seen once during rapid tapping; whether
+that was one press or several merged is not yet known, and 8 of 10 mixed-speed
+taps were detected in that test.
 
 The daemon uses mask `0x21` to catch both behaviors. This is one of the key findings that differs from the SANE header (which only documents bit 0).
 
 ### Virgin flag (byte 4, bit 7)
 
-Bit 7 of byte 4 (`0x80`) is set when the scanner first powers on and has never had its button pressed. It clears permanently after the first button press and stays cleared until the next power cycle (lid close/open). The daemon ignores this bit — it's not useful for event detection.
+Bit 7 of byte 4 (`0x80`) was seen set when the scanner first powered on,
+before its button had been pressed, and clearing after the first press. It was
+not seen in 2026 captures taken after power-on (which followed s1500d's USB
+reset on open), so treat this description as unconfirmed. The daemon ignores
+this bit — it's not useful for event detection.
 
 ### Example responses
 
@@ -117,8 +139,8 @@ This is why the daemon has an outer loop that watches for USB connect/disconnect
 
 The SANE `fujitsu` backend header defines the scan button as **bit 0 of byte 4**. Empirical testing with the S1500 shows this is incomplete:
 
-- **Bit 0 (`0x01`)** is a transient tap indicator — it's set for roughly one poll cycle on a quick press, then clears automatically. This is what SANE documents.
-- **Bit 5 (`0x20`)** is the sustained-hold signal — it stays set as long as the button is physically held down. This is **not documented** in the SANE header.
+- **Bit 0 (`0x01`)** was seen for a single poll at the end of isolated taps and holds, then cleared. This is the bit SANE documents.
+- **Bit 5 (`0x20`)** was seen while longer presses were held. This is **not documented** in the SANE header.
 
 If a scanner daemon only checks bit 0 (as the SANE header suggests), it will detect quick taps but may miss them if the poll interval is too wide. If it only checks bit 5, it will detect holds but miss quick taps entirely. The correct approach for the S1500 is to check both with mask `0x21`.
 
