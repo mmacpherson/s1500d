@@ -1,8 +1,9 @@
 # s1500d configuration
 #
 # handler: path to script called on events
-# gesture_timeout_ms: how long to wait for additional presses (default 600)
-# log_level: error, warn, info, debug, trace (default "info"; RUST_LOG overrides)
+# gesture_timeout_ms: how long to wait for additional presses, recommended 100-5000 (default 600)
+# log_level: off, error, warn, info, debug, trace (default "info"; RUST_LOG overrides)
+# Check this file without the scanner: s1500d --check-config /etc/s1500d/config.toml
 # profiles: map press count → profile name passed to handler as "scan <profile>"
 
 gesture_timeout_ms = 600

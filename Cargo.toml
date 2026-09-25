@@ -1,5 +1,6 @@
 [dependencies]
 env_logger = "0.11"
+libc = "0.2"
 log = "0.4"
 rusb = "0.9"
 serde = {version = "1", features = ["derive"]}
@@ -12,7 +13,7 @@ license = "MIT OR Apache-2.0"
 name = "s1500d"
 repository = "https://github.com/mmacpherson/s1500d"
 rust-version = "1.85"
-version = "0.3.1"
+version = "0.4.0"
 
 [profile.release]
 lto = true

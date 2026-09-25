@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, Write as IoWrite};
 use std::time::Duration;
 
-use crate::{poll_status, try_open, State};
+use crate::{poll_status, try_open, OpenError, State};
 
 const DOCTOR_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -23,7 +23,7 @@ fn wait_for_state(
     print!("      Polling");
     let _ = io::stdout().flush();
     loop {
-        if let Some(state) = poll_status(handle) {
+        if let Ok(state) = poll_status(handle) {
             if predicate(&state) {
                 return Some(state);
             }
@@ -61,14 +61,16 @@ pub fn doctor() {
     print!("[1/6] USB connection .......... ");
     let _ = io::stdout().flush();
     let handle = match try_open(&ctx) {
-        Some(h) => {
+        Ok(h) => {
             println!("ok");
             h
         }
-        None => {
+        Err(e) => {
             println!("FAIL");
-            println!("\n      Scanner not found (04c5:11a2).");
-            println!("      Is the ADF lid open? Check: lsusb | grep 04c5");
+            println!("\n      {e}");
+            if e == OpenError::NotFound {
+                println!("      Check: lsusb -d 04c5:11a2");
+            }
             std::process::exit(1);
         }
     };
@@ -77,13 +79,13 @@ pub fn doctor() {
     print!("[2/6] Hardware status ......... ");
     let _ = io::stdout().flush();
     let baseline = match poll_status(&handle) {
-        Some(s) => {
+        Ok(s) => {
             println!("ok  (paper={}, button={})", s.paper, s.button);
             s
         }
-        None => {
+        Err(e) => {
             println!("FAIL");
-            println!("\n      GET_HW_STATUS returned no data. USB communication error.");
+            println!("\n      GET_HW_STATUS failed: {e}");
             std::process::exit(1);
         }
     };

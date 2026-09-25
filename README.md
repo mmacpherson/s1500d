@@ -36,8 +36,9 @@ scanbd. Other ScanSnap models and macOS/Windows are not currently supported.
 - **Runs a handler script** on scanner events (button press, paper inserted/removed, lid open/close)
 - **Gesture detection** — optional TOML config maps multi-press patterns to named profiles (single press = standard scan, double press = legal size, etc.)
 - **USB release during handler execution** — the daemon releases the USB device before calling your handler, so `scanimage` and other SANE tools can claim the scanner
-- **`--doctor` mode** — interactive hardware verification that walks through each sensor
-- **Lid detection via USB presence** — opening the automatic document feed (ADF) lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect), so no polling is needed for door state
+- **`--doctor` mode** — interactive hardware verification that walks through each sensor, and says whether the scanner is missing, not permitted, or in use by another program
+- **`--check-config`** — validates a config file and its handler without the scanner
+- **Lid detection via USB presence** — opening the automatic document feed (ADF) lid powers the scanner on (USB enumeration), closing it powers off (USB disconnect), so door state comes from USB presence rather than the status poll
 
 ## Quick evaluation
 
@@ -97,6 +98,7 @@ s1500d                        Monitor and log events (no handler)
 s1500d HANDLER                Run HANDLER on each event
 s1500d -c CONFIG.toml         Gesture detection + profile dispatch
 s1500d --doctor               Interactive hardware verification
+s1500d --check-config FILE    Validate a config and its handler (no USB)
 ```
 
 ### Supported actions and gestures
@@ -127,9 +129,18 @@ The complete button-gesture behavior in config mode is:
 | Triple press | Dispatches the profile mapped to `3` after the timeout |
 | Any higher configured number of presses | Dispatches the profile mapped to that number |
 
-For a multi-press gesture, each next press must begin before the timeout after
-the previous release expires. How long you hold the button does not affect the
-gesture.
+The timeout runs from when s1500d sees each press end; the next press must be
+seen before it expires. Holding the button longer does not select a different
+profile. Press at a normal pace: very rapid taps can merge into one press, so a very
+fast double press may be counted as a single press.
+
+Handlers run one at a time, synchronously, with the USB device released —
+including `device-arrived`. Events observed in the same poll are delivered in
+order (paper before button). s1500d cannot see the scanner while a handler
+runs: afterwards, a changed button state is delivered as one press or
+release (timed when it was seen), paper changes are absorbed (a scan usually
+consumes the paper), and a press and release that both happen during the
+handler are not seen.
 
 Set `log_level = "debug"` in your config file for verbose output. The `RUST_LOG` environment variable overrides config if set.
 
@@ -156,13 +167,32 @@ destination, post-processing, OCR, upload, or anything else available to the
 commands it runs. A handler is not limited to `scanimage`; it can run any
 command you choose.
 
-`log_level` accepts standard values: `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this setting if set.
+`log_level` accepts standard values: `off`, `error`, `warn`, `info`, `debug`, `trace`. The `RUST_LOG` environment variable overrides this setting if set.
+
+s1500d refuses to start with a config it cannot use: an unknown key, a
+`gesture_timeout_ms` of 0, an unknown `log_level`, a press count of
+0, an empty profile name, or a handler that is missing or not executable.
+`s1500d --check-config FILE` runs the same checks without touching the scanner.
+A `gesture_timeout_ms` outside 100–5000 is allowed but logs a warning.
 
 See [`contrib/config.toml`](contrib/config.toml) for a full example and [`contrib/handler-example.sh`](contrib/handler-example.sh) for a handler template. For a practical scan-to-PDF workflow, see [`contrib/handler-scan-to-pdf.sh`](contrib/handler-scan-to-pdf.sh).
 
+With `SCAN_DEVICE` unset, the PDF handler runs `scanimage -L` and selects the
+scanner only if exactly one ScanSnap S1500 is listed. Otherwise it reports the
+list and asks for an exact `SCAN_DEVICE`; an explicit value skips discovery.
+Discovery runs on every scan. With `SANE_CONFIG_DIR` unset and a readable
+`fujitsu.conf`, it first tries a temporary Fujitsu-only configuration. Custom
+SANE configurations, missing configuration, or failed/empty fast lookups use
+full discovery, which can take several seconds. Set `SCAN_DEVICE` to the logged
+name to skip discovery entirely.
+It keeps failed attempts in private `$SCAN_DIR/.s1500d-*`
+directories and reports their recovery paths. Completed PDFs are mode 0640,
+owned by the invoking account, and never overwrite an existing filename.
+See [installation and access setup](INSTALL.md#configure-what-happens).
+
 ## How it works
 
-The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a single `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100ms and decodes the 12-byte response to detect button presses and paper presence. State transitions are edge-triggered — the handler fires only when something changes.
+The S1500 uses a vendor-specific USB protocol (class `FF:FF:FF`) with SCSI commands wrapped in a 31-byte Fujitsu envelope. The daemon sends a single `GET_HW_STATUS` command (SCSI opcode `0xC2`) every 100 ms (every 20 ms while waiting for another press of a gesture) and decodes the 12-byte response (checking the 13-byte status reply that follows) to detect button presses and paper presence. State transitions are edge-triggered — the handler fires only when something changes.
 
 The protocol was reverse-engineered from USB captures and the SANE `fujitsu` backend source code, then empirically verified with a physical scanner using the included [`docs/explore.py`](docs/explore.py) diagnostic tool.
 
@@ -189,7 +219,7 @@ The tradeoff: s1500d only works with the ScanSnap S1500 (and potentially other S
 The repo includes systemd and udev files in [`contrib/`](contrib/):
 
 - **`s1500d.service`** — systemd unit with security hardening
-- **`99-scansnap.rules`** — udev rule for non-root USB access
+- **`70-s1500d.rules`** — udev rule for non-root USB access
 - **`config.toml`** — example configuration
 - **`handler-example.sh`** — example handler script
 - **`handler-scan-to-pdf.sh`** — scan-to-PDF handler using `scanimage` + `img2pdf`

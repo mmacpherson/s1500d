@@ -42,6 +42,8 @@
 
 mod config;
 mod doctor;
+#[cfg(test)]
+mod sim;
 
 use std::process::Command as ShellCommand;
 use std::thread;
@@ -92,13 +94,12 @@ pub(crate) struct State {
 
 impl State {
     fn from_response(buf: &[u8]) -> Option<Self> {
-        if buf.len() < 5 {
-            debug!("short response: {} bytes (need 5)", buf.len());
+        if buf.len() != HW_STATUS_LEN {
             return None;
         }
         Some(Self {
             paper: buf[3] & 0x80 == 0,
-            // bit 5 (0x20) = button held; bit 0 (0x01) = button momentary/tap
+            // bit 5 (0x20) = held (longer presses); bit 0 (0x01) = pulse seen as a press ends
             button: buf[4] & 0x21 != 0,
         })
     }
@@ -155,112 +156,300 @@ fn transitions(prev: State, curr: State) -> impl Iterator<Item = Event> {
 ///   ├─ button-down ──→ Pressed(n+1)       # another press within window
 ///   └─ timeout ──────→ emit scan(n) → Idle # window expired, fire gesture
 /// ```
-#[derive(Debug)]
+///
+/// Time is observation time: a release first seen after a handler returns is
+/// stamped when it was seen. A press observed after the window has already
+/// expired finishes the old gesture and starts a new one.
+#[derive(Debug, Clone, Copy)]
 enum GestureState {
     Idle,
     Pressed(u32),
     Released(u32, Instant),
 }
 
+// ── Hardware seams ───────────────────────────────────────────────────
+
+/// Bulk-transfer access to a claimed scanner interface.
+pub(crate) trait Link {
+    fn write_bulk(&self, endpoint: u8, buf: &[u8], timeout: Duration) -> rusb::Result<usize>;
+    fn read_bulk(&self, endpoint: u8, buf: &mut [u8], timeout: Duration) -> rusb::Result<usize>;
+}
+
+impl Link for rusb::DeviceHandle<rusb::Context> {
+    fn write_bulk(&self, endpoint: u8, buf: &[u8], timeout: Duration) -> rusb::Result<usize> {
+        rusb::DeviceHandle::write_bulk(self, endpoint, buf, timeout)
+    }
+
+    fn read_bulk(&self, endpoint: u8, buf: &mut [u8], timeout: Duration) -> rusb::Result<usize> {
+        rusb::DeviceHandle::read_bulk(self, endpoint, buf, timeout)
+    }
+}
+
+/// Everything the event loop needs from outside the process: the device,
+/// handler execution, and time. Tests substitute a scripted implementation.
+trait Host {
+    type Handle: Link;
+
+    /// Open and claim the scanner.
+    fn open(&mut self) -> Option<Self::Handle>;
+    /// Open, reset, and reopen the scanner to clear stale protocol state.
+    fn open_with_reset(&mut self) -> Option<Self::Handle>;
+    /// Reset a wedged device and reopen it (unverified).
+    fn reset(&mut self, handle: Self::Handle) -> Option<Self::Handle>;
+    /// Release the interface so another process can claim the device.
+    fn release(&mut self, handle: Self::Handle);
+    /// Run the handler script synchronously.
+    fn run_handler(&mut self, script: &str, args: &[&str]);
+    fn sleep(&mut self, duration: Duration);
+    fn now(&self) -> Instant;
+    /// Whether the event loop should continue. Always true outside tests.
+    fn keep_running(&mut self) -> bool {
+        true
+    }
+}
+
 // ── USB communication ────────────────────────────────────────────────
 
+/// Why the scanner could not be opened, with the next corrective step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenError {
+    NotFound,
+    Access,
+    Busy,
+    Other(rusb::Error),
+}
+
+impl From<rusb::Error> for OpenError {
+    fn from(e: rusb::Error) -> Self {
+        match e {
+            rusb::Error::NotFound | rusb::Error::NoDevice => Self::NotFound,
+            rusb::Error::Access => Self::Access,
+            rusb::Error::Busy => Self::Busy,
+            e => Self::Other(e),
+        }
+    }
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "scanner 04c5:11a2 not found; is the ADF lid open?"),
+            Self::Access => write!(
+                f,
+                "permission denied opening the scanner; install the udev rule \
+                 (70-s1500d.rules) and run as the s1500d service account, or as root"
+            ),
+            Self::Busy => write!(
+                f,
+                "scanner is in use by another program (scanbd, saned, another \
+                 s1500d, or a running scan); stop it and try again"
+            ),
+            Self::Other(e) => write!(f, "cannot open scanner: {e}"),
+        }
+    }
+}
+
 /// Open the scanner, returning a claimed device handle.
-pub(crate) fn try_open(ctx: &rusb::Context) -> Option<rusb::DeviceHandle<rusb::Context>> {
-    let handle = ctx.open_device_with_vid_pid(VID, PID)?;
-    let _ = handle.set_auto_detach_kernel_driver(true);
-    handle.claim_interface(IFACE).ok()?;
-    Some(handle)
-}
-
-/// Open the scanner with a USB reset to clear stale protocol state.
-///
-/// Used in the outer reconnect loop to ensure a clean connection after a
-/// previous s1500d process may have left the device in a bad state (e.g.,
-/// after `systemctl restart`).
-fn try_open_with_reset(ctx: &rusb::Context) -> Option<rusb::DeviceHandle<rusb::Context>> {
-    let handle = try_open(ctx)?;
-    info!("usb: resetting device for clean state");
-    if handle.reset().is_err() {
-        warn!("usb: reset failed, proceeding with existing handle");
-        return Some(handle);
-    }
-    // Drop stale handle, wait for device to re-enumerate, then re-open fresh.
-    drop(handle);
-    thread::sleep(Duration::from_millis(200));
-    try_open(ctx)
-}
-
-/// Attempt to recover from consecutive poll failures by resetting the device.
-///
-/// Takes ownership of the stale handle (preventing accidental reuse), resets,
-/// drops, re-opens, and verifies responsiveness with a test poll.
-fn try_reset_device(
-    handle: rusb::DeviceHandle<rusb::Context>,
+pub(crate) fn try_open(
     ctx: &rusb::Context,
-) -> Option<rusb::DeviceHandle<rusb::Context>> {
-    info!("usb: poll failures hit threshold, attempting device reset");
-    let _ = handle.reset();
-    drop(handle);
-    thread::sleep(Duration::from_millis(200));
+) -> Result<rusb::DeviceHandle<rusb::Context>, OpenError> {
+    let device = ctx
+        .devices()?
+        .iter()
+        .find(|d| {
+            d.device_descriptor()
+                .is_ok_and(|desc| desc.vendor_id() == VID && desc.product_id() == PID)
+        })
+        .ok_or(OpenError::NotFound)?;
+    let handle = device.open()?;
+    let _ = handle.set_auto_detach_kernel_driver(true);
+    handle.claim_interface(IFACE)?;
+    Ok(handle)
+}
 
-    let new_handle = try_open(ctx)?;
-    // Verify the device is actually responsive.
-    if poll_status(&new_handle).is_some() {
-        info!("usb: device reset successful, resuming");
-        Some(new_handle)
-    } else {
-        warn!("usb: device unresponsive after reset");
-        None
+/// The real host: libusb, child processes, and wall-clock time.
+struct UsbHost {
+    ctx: rusb::Context,
+    /// Last open failure, so a closed lid is reported once, not every retry.
+    last_open_error: Option<OpenError>,
+}
+
+impl UsbHost {
+    fn try_open(&mut self) -> Option<rusb::DeviceHandle<rusb::Context>> {
+        match try_open(&self.ctx) {
+            Ok(handle) => {
+                self.last_open_error = None;
+                Some(handle)
+            }
+            Err(e) => {
+                if self.last_open_error != Some(e) {
+                    match e {
+                        OpenError::NotFound => info!("usb: {e}"),
+                        _ => warn!("usb: {e}"),
+                    }
+                    self.last_open_error = Some(e);
+                }
+                None
+            }
+        }
     }
 }
 
-/// Send GET_HW_STATUS and decode the response.
-pub(crate) fn poll_status(handle: &rusb::DeviceHandle<rusb::Context>) -> Option<State> {
+impl Host for UsbHost {
+    type Handle = rusb::DeviceHandle<rusb::Context>;
+
+    fn open(&mut self) -> Option<Self::Handle> {
+        self.try_open()
+    }
+
+    /// Used in the outer reconnect loop to ensure a clean connection after a
+    /// previous s1500d process may have left the device in a bad state (e.g.,
+    /// after `systemctl restart`).
+    fn open_with_reset(&mut self) -> Option<Self::Handle> {
+        let handle = self.try_open()?;
+        info!("usb: resetting device for clean state");
+        if handle.reset().is_err() {
+            warn!("usb: reset failed, proceeding with existing handle");
+            return Some(handle);
+        }
+        // Drop stale handle, wait for device to re-enumerate, then re-open fresh.
+        drop(handle);
+        thread::sleep(Duration::from_millis(200));
+        self.try_open()
+    }
+
+    /// Takes ownership of the stale handle (preventing accidental reuse),
+    /// resets, drops, and re-opens.
+    fn reset(&mut self, handle: Self::Handle) -> Option<Self::Handle> {
+        let _ = handle.reset();
+        drop(handle);
+        thread::sleep(Duration::from_millis(200));
+        self.try_open()
+    }
+
+    fn release(&mut self, handle: Self::Handle) {
+        let _ = handle.release_interface(IFACE);
+        drop(handle);
+        debug!("usb: released for handler");
+    }
+
+    fn run_handler(&mut self, script: &str, args: &[&str]) {
+        run_handler(script, args);
+    }
+
+    fn sleep(&mut self, duration: Duration) {
+        thread::sleep(duration);
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// Attempt to recover from consecutive poll failures by resetting the device,
+/// then verify responsiveness with a test poll. Returns the verification
+/// sample too: it is a real observation, not to be discarded.
+fn try_reset_device<H: Host>(host: &mut H, handle: H::Handle) -> Option<(H::Handle, State)> {
+    info!("usb: poll failures hit threshold, attempting device reset");
+    let new_handle = host.reset(handle)?;
+    match poll_status(&new_handle) {
+        Ok(state) => {
+            info!("usb: device reset successful, resuming");
+            Some((new_handle, state))
+        }
+        Err(e) => {
+            warn!("usb: device unresponsive after reset: {e}");
+            None
+        }
+    }
+}
+
+/// Length of the GET_HW_STATUS data phase (the CDB's allocation length).
+const HW_STATUS_LEN: usize = 12;
+/// Fujitsu USB status envelope: 13 bytes, code 0x53, SCSI status at byte 9.
+const USB_STATUS_CODE: u8 = 0x53;
+const USB_STATUS_LEN: usize = 13;
+const USB_STATUS_OFFSET: usize = 9;
+
+/// Why a GET_HW_STATUS transaction was rejected.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PollError {
+    Write(rusb::Error),
+    ShortWrite(usize),
+    ReadData(rusb::Error),
+    /// A status envelope arrived where sensor data was expected.
+    StatusInData(Vec<u8>),
+    BadDataLength(usize),
+    ReadStatus(rusb::Error),
+    BadStatus(Vec<u8>),
+}
+
+impl std::fmt::Display for PollError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Write(e) => write!(f, "command write failed: {e}"),
+            Self::ShortWrite(n) => write!(f, "short command write: {n}/31 bytes"),
+            Self::ReadData(e) => write!(f, "data read failed: {e}"),
+            Self::StatusInData(b) => write!(f, "status envelope in data phase: {}", hex(b)),
+            Self::BadDataLength(n) => {
+                write!(f, "data phase returned {n} bytes (want {HW_STATUS_LEN})")
+            }
+            Self::ReadStatus(e) => write!(f, "status read failed: {e}"),
+            Self::BadStatus(b) => write!(f, "bad status envelope: {}", hex(b)),
+        }
+    }
+}
+
+fn hex(buf: &[u8]) -> String {
+    buf.iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_good_status(buf: &[u8]) -> bool {
+    buf.len() == USB_STATUS_LEN && buf[0] == USB_STATUS_CODE && buf[USB_STATUS_OFFSET] == 0
+}
+
+/// Send GET_HW_STATUS and decode the response. The transaction counts only if
+/// every phase completes with the documented shape.
+pub(crate) fn poll_status(link: &impl Link) -> Result<State, PollError> {
     let cmd = envelope(&GHS_CDB);
 
     // Phase 1: command
-    handle.write_bulk(EP_OUT, &cmd, USB_TIMEOUT).ok()?;
+    let n = link
+        .write_bulk(EP_OUT, &cmd, USB_TIMEOUT)
+        .map_err(PollError::Write)?;
+    if n != cmd.len() {
+        return Err(PollError::ShortWrite(n));
+    }
 
     // Phase 2: data (12 bytes of hardware status)
     let mut buf = [0u8; 64];
-    let n = handle.read_bulk(EP_IN, &mut buf, USB_TIMEOUT).ok()?;
+    let n = link
+        .read_bulk(EP_IN, &mut buf, USB_TIMEOUT)
+        .map_err(PollError::ReadData)?;
+    let data = &buf[..n];
+    debug!("raw: {}", hex(data));
 
-    // Phase 3: drain the status envelope (0x53...)
-    let mut discard = [0u8; 64];
-    let _ = handle.read_bulk(EP_IN, &mut discard, STATUS_TIMEOUT);
+    // A command the device rejected answers with status and no data; there
+    // is no further phase to drain.
+    if n == USB_STATUS_LEN && data[0] == USB_STATUS_CODE {
+        return Err(PollError::StatusInData(data.to_vec()));
+    }
 
-    debug!(
-        "raw: {}",
-        buf[..n]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
+    // Phase 3: status envelope (0x53...). Read it even if the data is bad so
+    // the next transaction starts in sync.
+    let mut status = [0u8; 64];
+    let m = link
+        .read_bulk(EP_IN, &mut status, STATUS_TIMEOUT)
+        .map_err(PollError::ReadStatus)?;
+    debug!("status: {}", hex(&status[..m]));
+    if !is_good_status(&status[..m]) {
+        return Err(PollError::BadStatus(status[..m].to_vec()));
+    }
 
-    State::from_response(&buf[..n])
-}
-
-/// Release the USB handle so another process (scanimage) can claim the device.
-fn release_usb(handle: rusb::DeviceHandle<rusb::Context>) {
-    let _ = handle.release_interface(IFACE);
-    drop(handle);
-    debug!("usb: released for handler");
-}
-
-/// Release USB, run handler, reclaim device, and re-read baseline state.
-/// Returns the new handle + fresh state, or None if the device is gone.
-fn run_handler_with_usb(
-    handle: rusb::DeviceHandle<rusb::Context>,
-    ctx: &rusb::Context,
-    script: &str,
-    args: &[&str],
-) -> Option<(rusb::DeviceHandle<rusb::Context>, State)> {
-    release_usb(handle);
-    run_handler(script, args);
-    let h = try_open(ctx)?;
-    let state = poll_status(&h)?;
-    Some((h, state))
+    State::from_response(data).ok_or(PollError::BadDataLength(n))
 }
 
 // ── Event dispatch ───────────────────────────────────────────────────
@@ -299,6 +488,8 @@ fn print_usage() {
          \x20 s1500d HANDLER           Run HANDLER on each raw event\n\
          \x20 s1500d -c CONFIG.toml    Gesture detection + profile dispatch\n\
          \x20 s1500d --doctor          Interactive hardware verification\n\
+         \x20 s1500d --check-config CONFIG.toml\n\
+         \x20                          Validate a config and its handler (no USB)\n\
          \x20 s1500d --version         Show version\n\
          \x20 s1500d --help            Show this message\n\
          \n\
@@ -322,221 +513,261 @@ fn print_usage() {
     );
 }
 
-/// What action the event loop should take after processing transitions.
-#[derive(Debug)]
-enum Action {
-    /// No handler to run — just continue polling.
-    Continue,
-    /// Run handler with USB release/reclaim. Args: (script, args).
-    RunHandler(String, Vec<String>),
+/// Handler invocations observed but not yet run, oldest first. Each entry is
+/// the handler's argument list.
+type Dispatches = Vec<Vec<String>>;
+
+impl Mode {
+    fn handler(&self) -> Option<&str> {
+        match self {
+            Mode::LogOnly => None,
+            Mode::Legacy(script) => Some(script),
+            Mode::ConfigMode(config) => Some(&config.handler),
+        }
+    }
 }
 
-fn run(mode: Mode) -> ! {
+fn run_forever(mode: Mode) -> ! {
     let ctx = rusb::Context::new().expect("failed to create USB context");
+    run(
+        &mode,
+        &mut UsbHost {
+            ctx,
+            last_open_error: None,
+        },
+    );
+    unreachable!("the USB host never stops the event loop");
+}
+
+/// Release USB, run the queued handlers in order, and reclaim the device.
+/// Returns None if the device cannot be reclaimed.
+fn dispatch<H: Host>(
+    host: &mut H,
+    handle: H::Handle,
+    script: &str,
+    queue: &mut Dispatches,
+) -> Option<H::Handle> {
+    host.release(handle);
+    for args in queue.drain(..) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        host.run_handler(script, &args);
+    }
+    host.open()
+}
+
+fn run<H: Host>(mode: &Mode, host: &mut H) {
     let mut was_present = false;
+    // Last accepted sample. Updated before any handler for it runs, so a
+    // reconnect never replays transitions that were already dispatched.
     let mut prev: Option<State> = None;
     let mut gesture = GestureState::Idle;
+    // Set after an interval in which the scanner was not observed (handler
+    // handoff, reset). The next valid sample reconciles rather than diffs:
+    // paper changes are absorbed, the button is compared with `prev`, and no
+    // gesture timeout fires until that sample has been taken.
+    let mut gap = false;
+    let mut queue: Dispatches = Vec::new();
 
-    loop {
+    while host.keep_running() {
         // ── Phase 1: wait for device ─────────────────────────────
         let mut handle = loop {
-            match try_open_with_reset(&ctx) {
+            if !host.keep_running() {
+                return;
+            }
+            match host.open_with_reset() {
                 Some(h) => break h,
                 None => {
                     if was_present {
                         info!("{}", Event::DeviceLeft.tag());
-                        emit_handler(&mode, &[Event::DeviceLeft.tag()]);
+                        if let Some(script) = mode.handler() {
+                            host.run_handler(script, &[Event::DeviceLeft.tag()]);
+                        }
                         was_present = false;
                         prev = None;
                         gesture = GestureState::Idle;
+                        gap = false;
                     }
-                    thread::sleep(RECONNECT_INTERVAL);
+                    host.sleep(RECONNECT_INTERVAL);
                 }
             }
         };
 
         if !was_present {
             info!("{}", Event::DeviceArrived.tag());
-            emit_handler(&mode, &[Event::DeviceArrived.tag()]);
             was_present = true;
+            if let Some(script) = mode.handler() {
+                let mut arrived = vec![vec![Event::DeviceArrived.tag().to_string()]];
+                match dispatch(host, handle, script, &mut arrived) {
+                    Some(h) => handle = h,
+                    None => continue,
+                }
+            }
         }
 
         // ── Phase 2: poll status while device is alive ───────────
         let mut poll_failures: u32 = 0;
         let mut has_reset = false;
         'poll: loop {
-            // Check gesture timeout before polling
-            let gesture_action = check_gesture_timeout(&gesture, &mode);
-            if let Some(action) = gesture_action {
-                gesture = GestureState::Idle;
-                match action {
-                    Action::Continue => {}
-                    Action::RunHandler(script, args) => {
-                        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                        match run_handler_with_usb(handle, &ctx, &script, &arg_refs) {
-                            Some((h, fresh)) => {
-                                handle = h;
-                                prev = Some(fresh);
-                            }
-                            None => break 'poll,
-                        }
-                    }
+            if !host.keep_running() {
+                return;
+            }
+
+            // A gesture only completes against a confirmed-present device.
+            if !gap && poll_failures == 0 {
+                check_gesture_timeout(&mut gesture, mode, host.now(), &mut queue);
+            }
+            if let (Some(script), false) = (mode.handler(), queue.is_empty()) {
+                gap = true;
+                match dispatch(host, handle, script, &mut queue) {
+                    Some(h) => handle = h,
+                    None => break 'poll,
                 }
             }
 
-            let Some(state) = poll_status(&handle) else {
-                poll_failures += 1;
-                if poll_failures < MAX_POLL_FAILURES {
-                    debug!("poll failed ({poll_failures}/{MAX_POLL_FAILURES}), retrying");
-                    thread::sleep(POLL_INTERVAL);
-                    continue 'poll;
-                }
-                if !has_reset {
-                    has_reset = true;
-                    if let Some(new_handle) = try_reset_device(handle, &ctx) {
-                        handle = new_handle;
-                        poll_failures = 0;
+            let state = match poll_status(&handle) {
+                Ok(state) => state,
+                Err(e) => {
+                    poll_failures += 1;
+                    if poll_failures < MAX_POLL_FAILURES {
+                        debug!("poll failed ({poll_failures}/{MAX_POLL_FAILURES}): {e}, retrying");
+                        host.sleep(POLL_INTERVAL);
                         continue 'poll;
                     }
+                    debug!("poll failed ({poll_failures}/{MAX_POLL_FAILURES}): {e}");
+                    // Whatever happens next, the failed interval was unobserved.
+                    gap = true;
+                    let recovered = if has_reset {
+                        None
+                    } else {
+                        has_reset = true;
+                        try_reset_device(host, handle)
+                    };
+                    let Some((new_handle, verified)) = recovered else {
+                        debug!("poll failed, assuming device left");
+                        break;
+                    };
+                    handle = new_handle;
+                    // The verification sample reconciles like any post-gap sample.
+                    verified
                 }
-                debug!("poll failed, assuming device left");
-                break;
             };
             poll_failures = 0;
 
             match prev {
-                None => {
-                    info!("initial: paper={} button={}", state.paper, state.button);
-                }
+                None => info!("initial: paper={} button={}", state.paper, state.button),
                 Some(p) => {
-                    // Determine what action to take based on transitions.
-                    // We process events to decide on a single action, then execute it.
-                    let action = process_transitions(p, state, &mode, &mut gesture);
-
-                    match action {
-                        Action::Continue => {
-                            // No handler ran. prev = Some(state) at the bottom
-                            // of the loop updates the baseline naturally.
-                            // Do NOT re-read here — it would swallow the ButtonUp
-                            // transition from momentary 0x01 taps.
-                        }
-                        Action::RunHandler(script, args) => {
-                            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                            match run_handler_with_usb(handle, &ctx, &script, &arg_refs) {
-                                Some((h, fresh)) => {
-                                    handle = h;
-                                    prev = Some(fresh);
-                                    thread::sleep(POLL_INTERVAL);
-                                    continue 'poll;
-                                }
-                                None => break 'poll,
-                            }
-                        }
-                    }
+                    let now = host.now();
+                    process_transitions(p, state, mode, &mut gesture, now, gap, &mut queue);
                 }
             }
-
             prev = Some(state);
+            gap = false;
+
+            if !queue.is_empty() {
+                continue 'poll;
+            }
 
             // In config mode with a pending gesture, poll faster to hit timeout promptly
-            let sleep = match (&mode, &gesture) {
+            let sleep = match (mode, &gesture) {
                 (Mode::ConfigMode(_), GestureState::Released(_, _)) => Duration::from_millis(20),
                 _ => POLL_INTERVAL,
             };
-            thread::sleep(sleep);
+            host.sleep(sleep);
         }
     }
 }
 
-/// Check if a gesture timeout has expired and return the action to take.
-fn check_gesture_timeout(gesture: &GestureState, mode: &Mode) -> Option<Action> {
-    let config = match mode {
-        Mode::ConfigMode(c) => c,
-        _ => return None,
-    };
-    let (count, ts) = match gesture {
-        GestureState::Released(count, ts) => (*count, *ts),
-        _ => return None,
-    };
-    if ts.elapsed() < config.gesture_timeout() {
-        return None;
-    }
-
+/// Queue the scan for a completed gesture, if its press count is mapped.
+fn finish_gesture(count: u32, config: &Config, queue: &mut Dispatches) {
     if let Some(profile) = config.profiles.get(&count) {
         info!("scan {} ({}x press)", profile, count);
-        Some(Action::RunHandler(
-            config.handler.clone(),
-            vec!["scan".into(), profile.clone()],
-        ))
+        queue.push(vec!["scan".into(), profile.clone()]);
     } else {
         info!("{}x press — no profile mapped, ignoring", count);
-        Some(Action::Continue)
     }
 }
 
-/// Process state transitions and return what action to take.
-///
-/// For config mode, button events update the gesture state machine (no handler yet).
-/// For legacy mode, the first event triggers handler dispatch.
-/// For log-only, events are logged and Action::Continue is returned.
+fn expired(ts: Instant, now: Instant, config: &Config) -> bool {
+    now.duration_since(ts) >= config.gesture_timeout()
+}
+
+/// Finish the gesture if its window has expired.
+fn check_gesture_timeout(
+    gesture: &mut GestureState,
+    mode: &Mode,
+    now: Instant,
+    queue: &mut Dispatches,
+) {
+    let Mode::ConfigMode(config) = mode else {
+        return;
+    };
+    if let GestureState::Released(count, ts) = *gesture {
+        if expired(ts, now, config) {
+            *gesture = GestureState::Idle;
+            finish_gesture(count, config, queue);
+        }
+    }
+}
+
+/// Apply every transition between two accepted samples, in order: paper, then
+/// button. Handler invocations are queued, not run. After an observation gap
+/// (`gap`), paper changes are absorbed because a handler may have caused them.
 fn process_transitions(
     prev: State,
     curr: State,
     mode: &Mode,
     gesture: &mut GestureState,
-) -> Action {
+    now: Instant,
+    gap: bool,
+    queue: &mut Dispatches,
+) {
     for ev in transitions(prev, curr) {
+        let is_paper = matches!(ev, Event::PaperIn | Event::PaperOut);
+        if gap && is_paper {
+            debug!("{} while unobserved, absorbed", ev.tag());
+            continue;
+        }
         match mode {
-            Mode::ConfigMode(ref config) => {
-                match ev {
-                    Event::ButtonDown => {
-                        *gesture = match *gesture {
-                            GestureState::Idle => {
-                                debug!("gesture: press 1");
-                                GestureState::Pressed(1)
-                            }
-                            GestureState::Released(n, _) => {
-                                debug!("gesture: press {}", n + 1);
-                                GestureState::Pressed(n + 1)
-                            }
-                            // Shouldn't happen (double down without up)
-                            GestureState::Pressed(n) => GestureState::Pressed(n),
-                        };
-                    }
-                    Event::ButtonUp => {
-                        *gesture = match *gesture {
-                            GestureState::Pressed(n) => {
-                                debug!("gesture: release {n}, waiting...");
-                                GestureState::Released(n, Instant::now())
-                            }
-                            _ => GestureState::Idle,
-                        };
-                    }
-                    // Non-button events: fire handler immediately
-                    _ => {
-                        info!("{}", ev.tag());
-                        return Action::RunHandler(config.handler.clone(), vec![ev.tag().into()]);
-                    }
-                }
+            Mode::ConfigMode(config) if !is_paper => {
+                debug!("{}", ev.tag());
+                *gesture = next_gesture(*gesture, ev, config, now, queue);
             }
-            Mode::Legacy(ref script) => {
+            Mode::LogOnly => info!("{}", ev.tag()),
+            _ => {
                 info!("{}", ev.tag());
-                return Action::RunHandler(script.clone(), vec![ev.tag().into()]);
-            }
-            Mode::LogOnly => {
-                info!("{}", ev.tag());
+                queue.push(vec![ev.tag().into()]);
             }
         }
     }
-    Action::Continue
 }
 
-/// Run the handler for lifecycle events (device-arrived/left) that don't need USB release.
-fn emit_handler(mode: &Mode, args: &[&str]) {
-    match mode {
-        Mode::LogOnly => {}
-        Mode::Legacy(script) => run_handler(script, args),
-        Mode::ConfigMode(config) => run_handler(&config.handler, args),
+fn next_gesture(
+    gesture: GestureState,
+    ev: Event,
+    config: &Config,
+    now: Instant,
+    queue: &mut Dispatches,
+) -> GestureState {
+    match (ev, gesture) {
+        (Event::ButtonDown, GestureState::Released(n, ts)) if expired(ts, now, config) => {
+            finish_gesture(n, config, queue);
+            debug!("gesture: press 1");
+            GestureState::Pressed(1)
+        }
+        (Event::ButtonDown, GestureState::Released(n, _)) => {
+            debug!("gesture: press {}", n + 1);
+            GestureState::Pressed(n + 1)
+        }
+        (Event::ButtonDown, GestureState::Idle) => {
+            debug!("gesture: press 1");
+            GestureState::Pressed(1)
+        }
+        (Event::ButtonUp, GestureState::Pressed(n)) => {
+            debug!("gesture: release {n}, waiting...");
+            GestureState::Released(n, now)
+        }
+        // Down while pressed or up while not pressed: nothing to count.
+        (_, other) => other,
     }
 }
 
@@ -552,6 +783,28 @@ fn main() {
         Some("--version" | "-V") => {
             println!("s1500d {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
+        }
+        Some("--check-config") => {
+            let Some(path) = args.get(2) else {
+                eprintln!("s1500d: --check-config requires a config file path");
+                std::process::exit(2);
+            };
+            match config::check_config(path) {
+                Ok(c) => {
+                    for warning in c.warnings() {
+                        eprintln!("s1500d: warning: {warning}");
+                    }
+                    println!(
+                        "{path}: ok (handler {}, gesture timeout {} ms, profiles {:?})",
+                        c.handler, c.gesture_timeout_ms, c.profiles
+                    );
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("s1500d: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Some("--doctor") => {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -591,15 +844,15 @@ fn main() {
                 "s1500d starting — config: {config_path}, handler: {}, profiles: {:?}",
                 config.handler, config.profiles
             );
-            run(Mode::ConfigMode(config));
+            run_forever(Mode::ConfigMode(config));
         }
         Some(h) => {
             info!("s1500d starting — handler: {h} (legacy mode)");
-            run(Mode::Legacy(h.to_string()));
+            run_forever(Mode::Legacy(h.to_string()));
         }
         None => {
             info!("s1500d starting — no handler (log only)");
-            run(Mode::LogOnly);
+            run_forever(Mode::LogOnly);
         }
     }
 }
@@ -607,7 +860,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::sim::test_config;
 
     // ── State::from_response ─────────────────────────────────────
 
@@ -640,7 +893,7 @@ mod tests {
 
     #[test]
     fn state_button_momentary_tap() {
-        // byte 4 = 0x01 (bit 0 = momentary tap)
+        // byte 4 = 0x01 (bit 0 = pulse seen as a quick tap ends)
         let buf = [0, 0, 0, 0x80, 0x01, 0, 0, 0, 0, 0, 0, 0];
         let s = State::from_response(&buf).unwrap();
         assert!(s.button);
@@ -666,6 +919,7 @@ mod tests {
     #[test]
     fn state_short_buffer() {
         assert!(State::from_response(&[0, 0]).is_none());
+        assert!(State::from_response(&[0, 0, 0, 0x80, 0x00]).is_none());
     }
 
     #[test]
@@ -803,83 +1057,69 @@ mod tests {
 
     // ── process_transitions ──────────────────────────────────────
 
-    fn test_config() -> Config {
-        Config {
-            handler: "/bin/test-handler.sh".into(),
-            gesture_timeout_ms: 600,
-            log_level: "info".into(),
-            profiles: HashMap::from([(1, "standard".into()), (2, "legal".into())]),
-        }
+    const NONE: State = State {
+        paper: false,
+        button: false,
+    };
+    const PAPER: State = State {
+        paper: true,
+        button: false,
+    };
+    const BUTTON: State = State {
+        paper: false,
+        button: true,
+    };
+    const BOTH: State = State {
+        paper: true,
+        button: true,
+    };
+
+    /// Run process_transitions and return the queued handler arguments.
+    fn process(
+        prev: State,
+        curr: State,
+        mode: &Mode,
+        gesture: &mut GestureState,
+        gap: bool,
+    ) -> Dispatches {
+        let mut queue = Vec::new();
+        process_transitions(prev, curr, mode, gesture, Instant::now(), gap, &mut queue);
+        queue
     }
 
     #[test]
-    fn process_log_only_returns_continue() {
-        let prev = State {
-            paper: false,
-            button: false,
-        };
-        let curr = State {
-            paper: true,
-            button: false,
-        };
+    fn process_log_only_queues_nothing() {
         let mut gesture = GestureState::Idle;
-        let action = process_transitions(prev, curr, &Mode::LogOnly, &mut gesture);
-        assert!(matches!(action, Action::Continue));
+        assert!(process(NONE, BOTH, &Mode::LogOnly, &mut gesture, false).is_empty());
     }
 
     #[test]
-    fn process_legacy_fires_handler() {
-        let prev = State {
-            paper: false,
-            button: false,
-        };
-        let curr = State {
-            paper: true,
-            button: false,
-        };
+    fn process_legacy_queues_every_event_in_order() {
         let mut gesture = GestureState::Idle;
         let mode = Mode::Legacy("/bin/handler.sh".into());
-        let action = process_transitions(prev, curr, &mode, &mut gesture);
-        match action {
-            Action::RunHandler(script, args) => {
-                assert_eq!(script, "/bin/handler.sh");
-                assert_eq!(args, vec!["paper-in"]);
-            }
-            Action::Continue => panic!("expected RunHandler"),
-        }
+        assert_eq!(
+            process(NONE, BOTH, &mode, &mut gesture, false),
+            [["paper-in"], ["button-down"]]
+        );
+        assert_eq!(
+            process(BOTH, NONE, &mode, &mut gesture, false),
+            [["paper-out"], ["button-up"]]
+        );
     }
 
     #[test]
     fn process_config_button_down_starts_gesture() {
-        let prev = State {
-            paper: false,
-            button: false,
-        };
-        let curr = State {
-            paper: false,
-            button: true,
-        };
         let mut gesture = GestureState::Idle;
         let mode = Mode::ConfigMode(test_config());
-        let action = process_transitions(prev, curr, &mode, &mut gesture);
-        assert!(matches!(action, Action::Continue));
+        assert!(process(NONE, BUTTON, &mode, &mut gesture, false).is_empty());
         assert!(matches!(gesture, GestureState::Pressed(1)));
     }
 
     #[test]
     fn process_config_button_up_releases_gesture() {
-        let prev = State {
-            paper: false,
-            button: true,
-        };
-        let curr = State {
-            paper: false,
-            button: false,
-        };
         let mut gesture = GestureState::Pressed(1);
         let mode = Mode::ConfigMode(test_config());
-        let action = process_transitions(prev, curr, &mode, &mut gesture);
-        assert!(matches!(action, Action::Continue));
+        assert!(process(BUTTON, NONE, &mode, &mut gesture, false).is_empty());
         assert!(matches!(gesture, GestureState::Released(1, _)));
     }
 
@@ -887,110 +1127,121 @@ mod tests {
     fn process_config_double_press() {
         let mut gesture = GestureState::Released(1, Instant::now());
         let mode = Mode::ConfigMode(test_config());
-
-        // Second button down
-        let prev = State {
-            paper: false,
-            button: false,
-        };
-        let curr = State {
-            paper: false,
-            button: true,
-        };
-        let action = process_transitions(prev, curr, &mode, &mut gesture);
-        assert!(matches!(action, Action::Continue));
+        assert!(process(NONE, BUTTON, &mode, &mut gesture, false).is_empty());
         assert!(matches!(gesture, GestureState::Pressed(2)));
     }
 
     #[test]
-    fn process_config_paper_fires_immediately() {
-        let prev = State {
-            paper: false,
-            button: false,
-        };
-        let curr = State {
-            paper: true,
-            button: false,
-        };
-        let mut gesture = GestureState::Idle;
+    fn process_config_press_after_expired_window_finishes_old_gesture() {
+        let mut gesture = GestureState::Released(2, Instant::now() - Duration::from_secs(1));
         let mode = Mode::ConfigMode(test_config());
-        let action = process_transitions(prev, curr, &mode, &mut gesture);
-        match action {
-            Action::RunHandler(script, args) => {
-                assert_eq!(script, "/bin/test-handler.sh");
-                assert_eq!(args, vec!["paper-in"]);
-            }
-            Action::Continue => panic!("expected RunHandler for paper-in"),
-        }
+        assert_eq!(
+            process(NONE, BUTTON, &mode, &mut gesture, false),
+            [["scan", "legal"]]
+        );
+        assert!(matches!(gesture, GestureState::Pressed(1)));
     }
 
     #[test]
-    fn process_no_change_returns_continue() {
-        let s = State {
-            paper: false,
-            button: false,
-        };
+    fn process_config_paper_and_button_in_one_sample() {
         let mut gesture = GestureState::Idle;
-        let action = process_transitions(s, s, &Mode::LogOnly, &mut gesture);
-        assert!(matches!(action, Action::Continue));
+        let mode = Mode::ConfigMode(test_config());
+        assert_eq!(
+            process(NONE, BOTH, &mode, &mut gesture, false),
+            [["paper-in"]]
+        );
+        assert!(matches!(gesture, GestureState::Pressed(1)));
+    }
+
+    #[test]
+    fn process_gap_absorbs_paper_but_not_button() {
+        let mut gesture = GestureState::Idle;
+        let mode = Mode::Legacy("/bin/handler.sh".into());
+        assert_eq!(
+            process(BUTTON, PAPER, &mode, &mut gesture, true),
+            [["button-up"]]
+        );
+    }
+
+    #[test]
+    fn process_no_change_queues_nothing() {
+        let mut gesture = GestureState::Idle;
+        let mode = Mode::Legacy("/bin/handler.sh".into());
+        assert!(process(NONE, NONE, &mode, &mut gesture, false).is_empty());
     }
 
     // ── check_gesture_timeout ────────────────────────────────────
 
+    fn timeout(gesture: GestureState, mode: &Mode) -> (GestureState, Dispatches) {
+        let mut gesture = gesture;
+        let mut queue = Vec::new();
+        check_gesture_timeout(&mut gesture, mode, Instant::now(), &mut queue);
+        (gesture, queue)
+    }
+
+    fn expired_release(count: u32) -> GestureState {
+        GestureState::Released(count, Instant::now() - Duration::from_secs(1))
+    }
+
     #[test]
     fn gesture_timeout_not_config_mode() {
-        let gesture = GestureState::Released(1, Instant::now());
-        let mode = Mode::LogOnly;
-        assert!(check_gesture_timeout(&gesture, &mode).is_none());
+        let (gesture, queue) = timeout(expired_release(1), &Mode::LogOnly);
+        assert!(queue.is_empty());
+        assert!(matches!(gesture, GestureState::Released(1, _)));
     }
 
     #[test]
     fn gesture_timeout_not_released() {
-        let gesture = GestureState::Pressed(1);
         let mode = Mode::ConfigMode(test_config());
-        assert!(check_gesture_timeout(&gesture, &mode).is_none());
+        let (gesture, queue) = timeout(GestureState::Pressed(1), &mode);
+        assert!(queue.is_empty());
+        assert!(matches!(gesture, GestureState::Pressed(1)));
     }
 
     #[test]
     fn gesture_timeout_not_expired() {
-        let gesture = GestureState::Released(1, Instant::now());
         let mode = Mode::ConfigMode(test_config());
-        assert!(check_gesture_timeout(&gesture, &mode).is_none());
+        let (gesture, queue) = timeout(GestureState::Released(1, Instant::now()), &mode);
+        assert!(queue.is_empty());
+        assert!(matches!(gesture, GestureState::Released(1, _)));
     }
 
     #[test]
     fn gesture_timeout_expired_mapped() {
-        // Use a timestamp far enough in the past
-        let gesture = GestureState::Released(1, Instant::now() - Duration::from_secs(1));
         let mode = Mode::ConfigMode(test_config());
-        let action = check_gesture_timeout(&gesture, &mode);
-        match action {
-            Some(Action::RunHandler(script, args)) => {
-                assert_eq!(script, "/bin/test-handler.sh");
-                assert_eq!(args, vec!["scan", "standard"]);
-            }
-            other => panic!("expected RunHandler, got {other:?}"),
-        }
+        let (gesture, queue) = timeout(expired_release(1), &mode);
+        assert_eq!(queue, [["scan", "standard"]]);
+        assert!(matches!(gesture, GestureState::Idle));
     }
 
     #[test]
     fn gesture_timeout_expired_double_press() {
-        let gesture = GestureState::Released(2, Instant::now() - Duration::from_secs(1));
         let mode = Mode::ConfigMode(test_config());
-        let action = check_gesture_timeout(&gesture, &mode);
-        match action {
-            Some(Action::RunHandler(_, args)) => {
-                assert_eq!(args, vec!["scan", "legal"]);
-            }
-            other => panic!("expected RunHandler for double press, got {other:?}"),
-        }
+        let (_, queue) = timeout(expired_release(2), &mode);
+        assert_eq!(queue, [["scan", "legal"]]);
     }
 
     #[test]
     fn gesture_timeout_expired_unmapped() {
-        let gesture = GestureState::Released(5, Instant::now() - Duration::from_secs(1));
         let mode = Mode::ConfigMode(test_config());
-        let action = check_gesture_timeout(&gesture, &mode);
-        assert!(matches!(action, Some(Action::Continue)));
+        let (gesture, queue) = timeout(expired_release(5), &mode);
+        assert!(queue.is_empty());
+        assert!(matches!(gesture, GestureState::Idle));
+    }
+
+    // ── USB open diagnostics ─────────────────────────────────────
+
+    #[test]
+    fn open_errors_map_to_actionable_kinds() {
+        assert_eq!(OpenError::from(rusb::Error::NotFound), OpenError::NotFound);
+        assert_eq!(OpenError::from(rusb::Error::NoDevice), OpenError::NotFound);
+        assert_eq!(OpenError::from(rusb::Error::Access), OpenError::Access);
+        assert_eq!(OpenError::from(rusb::Error::Busy), OpenError::Busy);
+        assert_eq!(
+            OpenError::from(rusb::Error::Io),
+            OpenError::Other(rusb::Error::Io)
+        );
+        assert!(OpenError::Access.to_string().contains("udev rule"));
+        assert!(OpenError::Busy.to_string().contains("in use"));
     }
 }

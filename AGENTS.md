@@ -11,6 +11,8 @@ user-supplied handler. It does not scan documents itself.
 | `src/main.rs` | USB protocol, state machine, event loop, handler dispatch |
 | `src/config.rs` | TOML parsing and validation |
 | `src/doctor.rs` | Interactive physical-hardware check |
+| `src/sim.rs` | Test-only scripted scanner that drives the real event loop |
+| `tests/` | Stub-based tests for the example PDF handler |
 | `contrib/` | Example handlers, config, udev rule, and systemd unit |
 | `packaging/` | deb/rpm/tar/Arch release packaging |
 | `docs/protocol.md` | Reverse-engineered USB protocol reference |
@@ -24,6 +26,7 @@ cargo fmt --check
 cargo test --all-targets --locked
 cargo clippy --all-targets --locked -- -D warnings
 shellcheck contrib/*.sh packaging/*.sh
+python3 -m unittest discover -s tests
 ```
 
 The Rust tests do not require a scanner. Do not claim hardware validation unless
