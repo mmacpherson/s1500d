@@ -7,7 +7,7 @@ title: one-touch scanning on Linux without scanbd
 
 **TL;DR:** s1500d is a small, fast background program that makes the scan button
 on a Fujitsu ScanSnap S1500 work on Linux. Once it's set up: open the lid, load
-your paper, press the button, and get a PDF.
+your document, press the button, and get a PDF.
 
 ## should you use this?
 
