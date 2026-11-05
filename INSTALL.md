@@ -50,14 +50,18 @@ Requires libusb and a Rust toolchain:
 
 ```sh
 # Arch/CachyOS
-pacman -S libusb
+pacman -S libusb rust
 
 # Debian/Ubuntu
-apt install libusb-1.0-0-dev
+apt install libusb-1.0-0-dev cargo
 
 # Fedora
-dnf install libusb1-devel
+dnf install libusb1-devel cargo
 ```
+
+s1500d needs Rust 1.85 or newer; check with `cargo --version`. If your
+distribution's Rust is older, install a current toolchain with
+[rustup](https://rustup.rs).
 
 Then either:
 
