@@ -127,14 +127,22 @@ You'll need libusb and a Rust toolchain:
 
 ```sh
 # Arch/CachyOS
-pacman -S libusb
+pacman -S libusb rust
 
-# Debian/Ubuntu
-apt install libusb-1.0-0-dev
+# Debian 13+, Ubuntu 26.04+
+apt install libusb-1.0-0-dev cargo
+
+# Ubuntu 24.04 (its default Rust is 1.75, too old; use the 1.85 package)
+apt install libusb-1.0-0-dev cargo-1.85
+export PATH=/usr/lib/rust-1.85/bin:$PATH
 
 # Fedora
-dnf install libusb1-devel
+dnf install libusb1-devel cargo
 ```
+
+s1500d needs Rust 1.85 or newer; check with `cargo --version`. If your
+distribution's Rust is older, install a current toolchain with
+[rustup](https://rustup.rs).
 
 Then either:
 
