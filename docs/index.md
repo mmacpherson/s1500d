@@ -129,8 +129,12 @@ You'll need libusb and a Rust toolchain:
 # Arch/CachyOS
 pacman -S libusb rust
 
-# Debian/Ubuntu
+# Debian 13+, Ubuntu 26.04+
 apt install libusb-1.0-0-dev cargo
+
+# Ubuntu 24.04 (its default Rust is 1.75, too old; use the 1.85 package)
+apt install libusb-1.0-0-dev cargo-1.85
+export PATH=/usr/lib/rust-1.85/bin:$PATH
 
 # Fedora
 dnf install libusb1-devel cargo
