@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-orange)](https://www.rust-lang.org)
 
-A minimal Linux daemon that watches a Fujitsu ScanSnap S1500 over USB and runs a
+A minimal Linux daemon that watches a [Fujitsu ScanSnap S1500](https://www.pfu.ricoh.com/global/scanners/scansnap/discontinued/s1500/s1500.html) over USB and runs a
 script of your choice when its button or paper sensors change. It is the event
 trigger in a one-touch scanning workflow; your handler (usually `scanimage` plus
 whatever post-processing you want) performs the scan.
